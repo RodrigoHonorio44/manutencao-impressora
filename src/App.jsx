@@ -5,10 +5,12 @@ import Home from './pages/Home';
 import Estoque from './pages/Estoque';
 import Manutencao from './pages/Manutencao';
 import NotasServico from './pages/NotasServico';
+import Historico from './pages/Historico'; 
+import Manuais from './pages/Manuais'; // IMPORTADA A CENTRAL DE ERROS E MANUAIS AQUI
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Criamos um componente de Layout para não repetir Sidebar e Main em todas as rotas
+// Componente de Layout para não repetir Sidebar e Main em todas as rotas protegidas
 const DashboardLayout = ({ children }) => (
   <ProtectedRoute>
     <div className="flex">
@@ -34,8 +36,10 @@ function App() {
         <Route path="/manutencao" element={<DashboardLayout><Manutencao /></DashboardLayout>} />
         <Route path="/estoque" element={<DashboardLayout><Estoque /></DashboardLayout>} />
         <Route path="/notas" element={<DashboardLayout><NotasServico /></DashboardLayout>} />
+        <Route path="/historico" element={<DashboardLayout><Historico /></DashboardLayout>} />
+        <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} /> {/* NOVA ROTA ADICIONADA PARA MANUAIS */}
 
-        {/* Redirecionamento de segurança - Tente comentar a linha abaixo se o erro persistir para ver o erro real no console */}
+        {/* Redirecionamento de segurança */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

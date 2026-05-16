@@ -1,9 +1,18 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { collection, addDoc, serverTimestamp, query, onSnapshot, where } from 'firebase/firestore'; 
-import { Printer, ClipboardList, AlertCircle, CheckCircle2, Settings, Hash } from 'lucide-react';
+import { Printer, ClipboardList, CheckCircle2, Settings, Hash } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
+
+// ESTRUTURA DE MARCAS E MODELOS SINCRONIZADA COM A CENTRAL DE ERROS
+const MODELOS_DISPONIVEIS = {
+  "Brother": ["HL-L5102DW", "DCP-L5652DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
+  "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
+  "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
+  "Phantom": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Phantom"],
+  "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"]
+};
 
 export default function Manutencao() {
   const [chamados, setChamados] = useState([]);
@@ -38,7 +47,9 @@ export default function Manutencao() {
 
   const handleEntrada = async (e) => {
     e.preventDefault();
-    if (!form.modelo || !form.serial) return toast.error("Modelo e Serial são obrigatórios!");
+    if (!form.marca || !form.modelo || !form.serial) {
+      return toast.error("Marca, Modelo e Serial são obrigatórios!");
+    }
     
     const loading = toast.loading("Registrando entrada...");
     const numeroOS = gerarNumeroOS();
@@ -46,7 +57,7 @@ export default function Manutencao() {
     try {
       await addDoc(collection(db, "atendimentos"), {
         ...form,
-        os: numeroOS, // Salva o número gerado no Firebase
+        os: numeroOS,
         status: 'Em Análise',
         pecas_utilizadas: [], 
         data_entrada: serverTimestamp()
@@ -59,10 +70,10 @@ export default function Manutencao() {
   };
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-8 space-y-8 bg-slate-50 min-h-screen">
       <header>
-        <h1 className="text-2xl font-bold text-slate-800">Manutenção & Bancada</h1>
-        <p className="text-slate-500 font-medium">Gerenciamento de reparos ativos.</p>
+        <h1 className="text-2xl font-black text-slate-800 tracking-tight">Manutenção & Bancada</h1>
+        <p className="text-slate-500 font-medium text-sm">Gerenciamento de reparos ativos.</p>
       </header>
 
       <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
@@ -70,18 +81,67 @@ export default function Manutencao() {
           <Printer size={24} />
           <h2 className="font-bold text-slate-800 text-lg">Nova Entrada</h2>
         </div>
+        
         <form onSubmit={handleEntrada} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <input placeholder="Cliente / Unidade" className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" value={form.cliente} onChange={(e) => setForm({...form, cliente: e.target.value})} />
-          <input placeholder="Marca" className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" value={form.marca} onChange={(e) => setForm({...form, marca: e.target.value})} />
-          <input placeholder="Modelo" className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" value={form.modelo} onChange={(e) => setForm({...form, modelo: e.target.value})} />
-          <input placeholder="S/N" className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" value={form.serial} onChange={(e) => setForm({...form, serial: e.target.value})} />
+          {/* CLIENTE */}
+          <input 
+            placeholder="Cliente / Unidade" 
+            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
+            value={form.cliente} 
+            onChange={(e) => setForm({...form, cliente: e.target.value})} 
+          />
+          
+          {/* SELETOR DE MARCA */}
+          <select
+            value={form.marca}
+            onChange={(e) => setForm({ ...form, marca: e.target.value, modelo: '' })}
+            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm"
+          >
+            <option value="">Selecione a Marca...</option>
+            {Object.keys(MODELOS_DISPONIVEIS).map((marca) => (
+              <option key={marca} value={marca}>{marca}</option>
+            ))}
+          </select>
+
+          {/* SELETOR DE MODELO DINÂMICO */}
+          <select
+            value={form.modelo}
+            disabled={!form.marca}
+            onChange={(e) => setForm({ ...form, modelo: e.target.value })}
+            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm disabled:cursor-not-allowed disabled:text-slate-400"
+          >
+            <option value="">
+              {form.marca ? "Selecione o Modelo..." : "Escolha a marca primeiro..."}
+            </option>
+            {form.marca && MODELOS_DISPONIVEIS[form.marca].map((mod) => (
+              <option key={mod} value={mod}>{mod}</option>
+            ))}
+          </select>
+
+          {/* NÚMERO DE SÉRIE */}
+          <input 
+            placeholder="S/N (Número de Série)" 
+            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
+            value={form.serial} 
+            onChange={(e) => setForm({...form, serial: e.target.value})} 
+          />
+          
+          {/* DEFEITO RELATADO + BOTÃO */}
           <div className="md:col-span-2 flex gap-2">
-            <input placeholder="Defeito Relatado" className="flex-1 p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium" value={form.defeito} onChange={(e) => setForm({...form, defeito: e.target.value})} />
-            <button className="bg-blue-600 text-white px-8 font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-sm">Dar Entrada</button>
+            <input 
+              placeholder="Defeito Relatado" 
+              className="flex-1 p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
+              value={form.defeito} 
+              onChange={(e) => setForm({...form, defeito: e.target.value})} 
+            />
+            <button className="bg-blue-600 text-white px-8 font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-sm whitespace-nowrap">
+              Dar Entrada
+            </button>
           </div>
         </form>
       </section>
 
+      {/* LISTAGEM DE CHAMADOS */}
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-slate-600 mb-2">
           <ClipboardList size={20} />
@@ -93,7 +153,6 @@ export default function Manutencao() {
             <div key={item.id} className="bg-white p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-center hover:shadow-md transition-all">
               <div className="space-y-3 flex-1 w-full">
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* NÚMERO DA OS COM DESTAQUE */}
                   <span className="flex items-center gap-1 text-[10px] font-black bg-blue-600 text-white px-2 py-1 rounded-lg">
                     <Hash size={12} /> OS: {item.os || 'GERANDO...'}
                   </span>
