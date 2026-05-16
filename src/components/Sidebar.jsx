@@ -1,4 +1,4 @@
-import { LayoutDashboard, Package, Printer, FileText, History, LogOut, User, BookOpen } from 'lucide-react'; // IMPORTADO O ÍCONE BOOKOPEN AQUI
+import { LayoutDashboard, Package, Printer, FileText, History, LogOut, User, BookOpen, CircleDollarSign } from 'lucide-react'; // 🟢 IMPORTADO O ÍCONE CIRCLEDOLLARSIGN AQUI
 import { auth } from '../firebase/config';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -12,8 +12,9 @@ export default function Sidebar() {
     { icon: <Printer size={20} />, label: 'Manutenção', path: '/manutencao' },
     { icon: <Package size={20} />, label: 'Estoque Peças', path: '/estoque' },
     { icon: <FileText size={20} />, label: 'Notas de Serviço', path: '/notas' },
+    { icon: <CircleDollarSign size={20} />, label: 'Finanças', path: '/financas' }, // 🟢 NOVO BOTÃO ADICIONADO PARA TELA DE FINANÇAS
     { icon: <History size={20} />, label: 'Histórico', path: '/historico' },
-    { icon: <BookOpen size={20} />, label: 'Manuais & Erros', path: '/manuais' }, // NOVO BOTÃO ADICIONADO PARA CENTRAL DE ERROS
+    { icon: <BookOpen size={20} />, label: 'Manuais & Erros', path: '/manuais' },
   ];
 
   const handleLogout = () => {

@@ -7,6 +7,7 @@ import Manutencao from './pages/Manutencao';
 import NotasServico from './pages/NotasServico';
 import Historico from './pages/Historico'; 
 import Manuais from './pages/Manuais'; // IMPORTADA A CENTRAL DE ERROS E MANUAIS AQUI
+import Financas from './pages/Financas'; // 🟢 IMPORTADA A NOVA TELA DE FINANÇAS AQUI
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -38,6 +39,7 @@ function App() {
         <Route path="/notas" element={<DashboardLayout><NotasServico /></DashboardLayout>} />
         <Route path="/historico" element={<DashboardLayout><Historico /></DashboardLayout>} />
         <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} /> {/* NOVA ROTA ADICIONADA PARA MANUAIS */}
+        <Route path="/financas" element={<DashboardLayout><Financas /></DashboardLayout>} /> {/* 🟢 NOVA ROTA ADICIONADA PARA FINANÇAS */}
 
         {/* Redirecionamento de segurança */}
         <Route path="*" element={<Navigate to="/" replace />} />
