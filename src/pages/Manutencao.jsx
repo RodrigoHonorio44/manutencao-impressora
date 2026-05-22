@@ -7,7 +7,7 @@ import ModalGerenciarOS from '../components/ModalGerenciarOS';
 
 // ESTRUTURA DE MARCAS E MODELOS SINCRONIZADA COM A CENTRAL DE ERROS
 const MODELOS_DISPONIVEIS = {
-  "Brother": ["HL-L5102DW", "DCP-L5652DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
+  "Brother": ["HL-L5102DW","HL-L6202DW", "DCP-L5652DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
   "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
   "Phantom": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Phantom"],
