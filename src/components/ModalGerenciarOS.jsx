@@ -1,50 +1,97 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, where, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { X, Package, Clock, CheckCircle, FileText } from 'lucide-react';
 
 export default function ModalGerenciarOS({ chamado, onClose }) {
   const [pecasEstoque, setPecasEstoque] = useState([]);
   const [pendencia, setPendencia] = useState(chamado.peca_pendente || '');
-  // Novo estado para o relatório do serviço
   const [relatorio, setRelatorio] = useState(chamado.relatorio_tecnico || '');
 
   useEffect(() => {
     const buscarPecas = async () => {
+      // Busca apenas peças compatíveis com o modelo da impressora
       const q = query(collection(db, "estoque_pecas"), where("modelo", ">=", chamado.modelo.split(' ')[0]));
       const querySnapshot = await getDocs(q);
-      setPecasEstoque(querySnapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // FILTRO INTELIGENTE: Remove da listagem inicial qualquer peça que já esteja zerada no banco
+      const apenasComEstoqueDisponivel = listaDados.filter(p => p.qtd > 0);
+      
+      setPecasEstoque(apenasComEstoqueDisponivel);
     };
-    buscarPecas();
+    if (chamado?.modelo) {
+      buscarPecas();
+    }
   }, [chamado]);
 
   const adicionarPeca = async (peca) => {
-    if (peca.qtd <= 0) return toast.error("Sem estoque!");
-    const loading = toast.loading("Dando baixa...");
+    if (peca.qtd <= 0) return toast.error("Sem estoque disponível!");
+    const loading = toast.loading("Dando baixa no insumo...");
+    
     const pecaRef = doc(db, "estoque_pecas", peca.id);
     const chamadoRef = doc(db, "atendimentos", chamado.id);
+    const historicoRef = collection(db, "historico_lotes_zerados");
 
     try {
       await runTransaction(db, async (transaction) => {
         const pDoc = await transaction.get(pecaRef);
-        transaction.update(pecaRef, { qtd: pDoc.data().qtd - 1 });
+        if (!pDoc.exists()) throw "Peça não encontrada no banco!";
+
+        const dadosPeca = pDoc.data();
+        const novaQtd = dadosPeca.qtd - 1;
+
+        // REGRA DE OURO: Se a peça zerou agora, joga pro histórico e deleta do estoque ativo
+        if (novaQtd <= 0) {
+          // Criamos o documento no histórico com a data final (hoje)
+          transaction.set(doc(historicoRef), {
+            marca: dadosPeca.marca,
+            modelo: dadosPeca.modelo,
+            nome: dadosPeca.nome,
+            qtd: 0,
+            data_entrada: dadosPeca.data_entrada, 
+            data_fim: serverTimestamp() 
+          });
+
+          // Remove o item de estoque_pecas para sumir do seletor imediatamente
+          transaction.delete(pecaRef);
+        } else {
+          // Se ainda sobrou estoque, apenas diminui 1 normalmente
+          transaction.update(pecaRef, { qtd: novaQtd });
+        }
         
-        // Atualiza o relatório automaticamente ao adicionar peça
+        // Atualiza o relatório técnico da ordem de serviço
         const novoRelatorio = relatorio 
           ? `${relatorio}, trocado ${peca.nome}` 
           : `Efetuada a troca de: ${peca.nome}`;
         
+        // Atualização do estado local para renderizar na tela
         setRelatorio(novoRelatorio);
 
+        // Atualiza os dados do atendimento/OS na transação
         transaction.update(chamadoRef, { 
           pecas_utilizadas: arrayUnion(peca.nome), 
           relatorio_tecnico: novoRelatorio,
           status: 'Em Manutenção'
         });
       });
-      toast.success(`${peca.nome} adicionada!`, { id: loading });
-    } catch (e) { toast.error("Erro na transação.", { id: loading }); }
+
+      // Atualiza a lista da tela removendo ou atualizando o item modificado
+      setPecasEstoque(prev => 
+        prev.map(p => {
+          if (p.id === peca.id) {
+            return { ...p, qtd: p.qtd - 1 };
+          }
+          return p;
+        }).filter(p => p.qtd > 0) // Esconde da tela caso tenha batido zero na hora
+      );
+
+      toast.success(`${peca.nome} aplicada com sucesso!`, { id: loading });
+    } catch (e) { 
+      console.error(e);
+      toast.error("Erro na transação ou estoque desatualizado.", { id: loading }); 
+    }
   };
 
   const salvarPendencia = async () => {
@@ -53,7 +100,7 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
       await updateDoc(doc(db, "atendimentos", chamado.id), { 
         status: 'Aguardando Peça',
         peca_pendente: pendencia,
-        relatorio_tecnico: relatorio // Salva o que já foi escrito
+        relatorio_tecnico: relatorio
       });
       toast.success("Status: Aguardando Peça");
       onClose();
@@ -90,7 +137,7 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           
           {/* Coluna 1: Peças */}
           <div className="space-y-4">
-            <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><Package size={14}/> Estoque</h3>
+            <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><Package size={14}/> Estoque Disponível</h3>
             <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
               {pecasEstoque.map(peca => (
                 <button key={peca.id} onClick={() => adicionarPeca(peca)} className="w-full p-3 text-left border rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all flex justify-between items-center group">
@@ -98,6 +145,9 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
                   <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500">{peca.qtd}</span>
                 </button>
               ))}
+              {pecasEstoque.length === 0 && (
+                <p className="text-xs text-slate-400 italic py-4">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
+              )}
             </div>
           </div>
 

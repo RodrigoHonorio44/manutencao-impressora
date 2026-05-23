@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, doc, deleteDoc } from 'firebase/firestore';
-import { PackagePlus, Table, Search, Info, Trash2 } from 'lucide-react';
+import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2 } from 'lucide-react'; // Importados novos ícones
 import toast from 'react-hot-toast';
 
-// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo Técnico Completo)
+// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Mantido seu catálogo)
 const CATALOGO_IMPRESSORAS = {
   Brother: {
     modelos: ["DCP-L5652DN", "MFC-L5702DN", "DCP-L5502DN", "HL-L5102DW"],
@@ -31,7 +31,6 @@ const CATALOGO_IMPRESSORAS = {
   HP: {
     modelos: ["LaserJet 408dn", "LaserJet M404n", "LaserJet M428fdw", "LaserJet P1102w"],
     pecas: [
-      // HP 408dn (Base Samsung)
       { nome: "Película de Fusão HP 408", pn: "JC66-03613A", obs: "Toner W1332A / Engenharia Samsung" },
       { nome: "Rolo Pressor do Fusor HP 408", pn: "JC66-03611A", obs: "Toner W1332A / Engenharia Samsung" },
       { nome: "Rolo Pick-up de Tração HP 408 (Rolete)", pn: "JC93-00540A", obs: "Rolete de alimentação da gaveta" },
@@ -41,7 +40,6 @@ const CATALOGO_IMPRESSORAS = {
       { nome: "Painel de Controle / Teclado HP 408", pn: "JC92-02945A", obs: "Botoeira e visor numérico" },
       { nome: "Gaveta de Papel Cassete HP 408", pn: "JC93-00843A", obs: "Bandeja de entrada de papel" },
       { nome: "Unidade de Cilindro / Imagem (W1332A)", pn: "W1332A", obs: "Cilindro de imagem fotocondutor" },
-      // Outros Modelos HP
       { nome: "Película de Fusão (Teflon - Série M404/M428)", pn: "RM2-2554-000", obs: "Série Pro 400 (Toner CF258A)" },
       { nome: "Rolo Pressor do Fusor (Série M404/M428)", pn: "RM2-5425-000", obs: "Série Pro 400 (Toner CF258A)" },
       { nome: "Rolo Pick-up Roller (Alimentação M404)", pn: "RM1-4006-000", obs: "Rolete em formato de D" },
@@ -75,16 +73,15 @@ const CATALOGO_IMPRESSORAS = {
 export default function Estoque() {
   const [pecas, setPecas] = useState([]);
   
-  // Estados para os Seletores Dinâmicos de Cadastro
+  // NOVO ESTADO: Controla se estamos vendo as peças ativas ou as esgotadas (arquivadas automaticamente)
+  const [verFiltroStatus, setVerFiltroStatus] = useState('disponivel'); // 'disponivel' ou 'esgotado'
+  
   const [marcaSelecionada, setMarcaSelecionada] = useState('');
   const [modeloSelecionada, setModeloSelecionada] = useState('');
   const [pecaObjetoSelecionado, setPecaObjetoSelecionado] = useState(null);
   const [quantidade, setQuantidade] = useState('');
-
-  // ESTADO DA BARRA DE PESQUISA DO ESTOQUE
   const [termoBusca, setTermoBusca] = useState('');
 
-  // 1. Busca os dados em tempo real do Firebase (onSnapshot)
   useEffect(() => {
     const q = query(collection(db, "estoque_pecas"), orderBy("data_entrada", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -100,7 +97,6 @@ export default function Estoque() {
     setPecaObjetoSelecionado(null);
   };
 
-  // 2. Grava a nova peça estruturada de forma limpa no banco
   const handleAdicionar = async (e) => {
     e.preventDefault();
     if (!marcaSelecionada || !modeloSelecionada || !pecaObjetoSelecionado || !quantidade) {
@@ -108,8 +104,6 @@ export default function Estoque() {
     }
 
     const loading = toast.loading("Registrando no estoque...");
-    
-    // Adiciona o nome da peça + observação de compatibilidade técnica no mesmo texto
     const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} - (Part Number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
 
     try {
@@ -129,7 +123,6 @@ export default function Estoque() {
     }
   };
 
-  // 3. FUNÇÃO PARA EXCLUIR CADASTRO INCORRETO DO FIREBASE
   const handleExcluir = async (id, nomeCompleto) => {
     const confirmar = window.confirm(`Deseja realmente remover esta entrada do estoque?\n\n"${nomeCompleto}"`);
     if (!confirmar) return;
@@ -143,14 +136,21 @@ export default function Estoque() {
     }
   };
 
-  // 4. LOGICA DO FILTRO DA BARRA DE BUSCA (Procura por código, marca, modelo ou nome)
+  // LÓGICA DO FILTRO: Separa automaticamente o que tem estoque do que está zerado
   const pecasFiltradas = pecas.filter(item => {
     const termo = termoBusca.toLowerCase();
-    return (
+    const correspondeBusca = (
       item.marca.toLowerCase().includes(termo) ||
       item.modelo.toLowerCase().includes(termo) ||
       item.nome.toLowerCase().includes(termo)
     );
+
+    // Se a aba selecionada for 'disponivel', mostra apenas qtd > 0. Se for 'esgotado', mostra qtd === 0
+    if (verFiltroStatus === 'disponivel') {
+      return correspondeBusca && item.qtd > 0;
+    } else {
+      return correspondeBusca && item.qtd <= 0;
+    }
   });
 
   return (
@@ -168,8 +168,7 @@ export default function Estoque() {
         </div>
 
         <form onSubmit={handleAdicionar} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-          
-          {/* Seletor 1: Marca */}
+          {/* Marca */}
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marca</label>
             <select 
@@ -184,7 +183,7 @@ export default function Estoque() {
             </select>
           </div>
 
-          {/* Seletor 2: Modelo */}
+          {/* Modelo */}
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Modelo</label>
             <select 
@@ -200,7 +199,7 @@ export default function Estoque() {
             </select>
           </div>
 
-          {/* Seletor 3: Peças Internas / Componentes */}
+          {/* Componente Interno */}
           <div className="flex flex-col space-y-1.5 md:col-span-2">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno / Part Number</label>
             <select 
@@ -218,7 +217,7 @@ export default function Estoque() {
             </select>
           </div>
 
-          {/* Quantidade e Gatilho de Envio */}
+          {/* Quantidade */}
           <div className="grid grid-cols-3 gap-2 md:col-span-1">
             <div className="col-span-1 flex flex-col space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase text-center tracking-wide">Qtd</label>
@@ -235,31 +234,52 @@ export default function Estoque() {
               Salvar
             </button>
           </div>
-
         </form>
       </section>
 
-      {/* BARRA DE PESQUISA TÉCNICA (O seu localizador rápido) */}
-      <div className="relative flex items-center bg-white border border-slate-200 rounded-2xl p-2 shadow-sm max-w-md">
-        <Search size={20} className="text-slate-400 ml-2" />
-        <input 
-          type="text"
-          placeholder="Buscar por Código (PN), Modelo ou Toner (ex: TN3472)..."
-          value={termoBusca}
-          onChange={(e) => setTermoBusca(e.target.value)}
-          className="w-full p-2 pl-3 text-sm font-medium outline-none text-slate-700 bg-transparent"
-        />
-        {termoBusca && (
-          <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 hover:text-slate-600 font-bold px-2">Limpar</button>
-        )}
+      {/* NOVO CONTEÚDO: Menu de Filtro (Abas) e Pesquisa posicionados lado a lado */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        
+        {/* Abas para alternar entre Itens Ativos e Arquivados/Esgotados */}
+        <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-300/40">
+          <button
+            onClick={() => setVerFiltroStatus('disponivel')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wide transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            <CheckCircle2 size={14} /> Em Estoque
+          </button>
+          <button
+            onClick={() => setVerFiltroStatus('esgotado')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wide transition-all ${verFiltroStatus === 'esgotado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            <Archive size={14} /> Arquivo (Zeradas)
+          </button>
+        </div>
+
+        {/* Barra de Pesquisa */}
+        <div className="relative flex items-center bg-white border border-slate-200 rounded-2xl p-2 shadow-sm w-full max-w-md">
+          <Search size={20} className="text-slate-400 ml-2" />
+          <input 
+            type="text"
+            placeholder="Buscar por Código (PN), Modelo ou Toner..."
+            value={termoBusca}
+            onChange={(e) => setTermoBusca(e.target.value)}
+            className="w-full p-2 pl-3 text-sm font-medium outline-none text-slate-700 bg-transparent"
+          />
+          {termoBusca && (
+            <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 hover:text-slate-600 font-bold px-2">Limpar</button>
+          )}
+        </div>
       </div>
 
-      {/* Tabela de Visualização Atualizada com Opção de Excluir */}
+      {/* Tabela de Visualização */}
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-5 bg-slate-50 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Table size={16} className="text-slate-400" />
-            <h3 className="font-bold text-slate-700 text-xs uppercase tracking-wider">Insumos em Estoque</h3>
+            <h3 className="font-bold text-slate-700 text-xs uppercase tracking-wider">
+              {verFiltroStatus === 'disponivel' ? 'Insumos Disponíveis' : 'Histórico de Peças Esgotadas'}
+            </h3>
           </div>
           <span className="text-xs bg-slate-200 text-slate-600 px-2.5 py-0.5 rounded-full font-bold">
             Mostrando {pecasFiltradas.length} itens
@@ -293,7 +313,8 @@ export default function Estoque() {
                     </div>
                   </td>
                   <td className="p-4 text-center">
-                    <span className="bg-blue-50 text-blue-700 font-black text-xs px-2.5 py-1 rounded-lg border border-blue-100">
+                    {/* Altera a cor do badge se a peça estiver zerada */}
+                    <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${item.qtd > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
                       {item.qtd?.toString().padStart(2, '0')}
                     </span>
                   </td>
@@ -311,7 +332,7 @@ export default function Estoque() {
               ))}
               {pecasFiltradas.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="text-center py-10 text-slate-400 italic text-sm">Nenhuma peça corresponde à sua busca.</td>
+                  <td colSpan="5" className="text-center py-10 text-slate-400 italic text-sm">Nenhum item nesta lista correspondente à sua busca.</td>
                 </tr>
               )}
             </tbody>
