@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { collection, query, onSnapshot, orderBy, where, limit } from 'firebase/firestore';
 import { Printer, Package, Clock, CheckCircle, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -15,18 +15,21 @@ export default function Home() {
   const [ultimasImpressoras, setUltimasImpressoras] = useState([]);
 
   useEffect(() => {
-    // 1. Monitorar Atendimentos (Bancada, Pendentes e Concluídos)
+    // 1. Monitorar Atendimentos (Bancada Ativa e Concluídos do Mês)
     const qAtendimentos = query(collection(db, "atendimentos"));
     const unsubAtendimentos = onSnapshot(qAtendimentos, (snapshot) => {
       const docs = snapshot.docs.map(d => d.data());
       
-      const bancada = docs.filter(d => d.status !== 'Finalizado').length;
+      // Conta na bancada apenas se NÃO estiver Finalizado E NÃO estiver Faturado
+      const bancada = docs.filter(d => d.status !== 'Finalizado' && d.status !== 'Faturado').length;
       const pendentes = docs.filter(d => d.status === 'Aguardando Peça').length;
       
-      // Concluídos no mês atual
+      // 🌟 CORREÇÃO: Considera "Finalizado" OU "Faturado" para somar os concluídos do mês atual
       const agora = new Date();
       const concluidos = docs.filter(d => {
-        if (d.status !== 'Finalizado' || !d.data_finalizacao) return false;
+        const statusValidoConclusao = d.status === 'Finalizado' || d.status === 'Faturado';
+        if (!statusValidoConclusao || !d.data_finalizacao) return false;
+        
         const dataF = d.data_finalizacao.toDate();
         return dataF.getMonth() === agora.getMonth() && dataF.getFullYear() === agora.getFullYear();
       }).length;
@@ -46,16 +49,21 @@ export default function Home() {
       setStats(prev => ({ ...prev, totalEstoque: total }));
     });
 
-    // 3. Buscar as 3 últimas impressoras que deram entrada
+    // 3. Buscar as últimas impressoras ativas na bancada (Oculta Faturadas/Finalizadas)
     const qRecentes = query(
       collection(db, "atendimentos"), 
+      where("status", "not-in", ["Finalizado", "Faturado"]),
+      orderBy("status"),
       orderBy("data_entrada", "desc"), 
       limit(3)
     );
     const unsubRecentes = onSnapshot(qRecentes, (snapshot) => {
-      setUltimasImpressoras(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const dadosTratados = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      dadosTratados.sort((a, b) => (b.data_entrada?.seconds || 0) - (a.data_entrada?.seconds || 0));
+      
+      setUltimasImpressoras(dadosTratados.slice(0, 3));
     }, (error) => {
-      console.error("Erro ao buscar recentes. Verifique se o índice foi criado no Firebase.", error);
+      console.error("Erro ao buscar recentes. Verifique se o índice composto foi criado no painel do Firebase.", error);
     });
 
     return () => {
@@ -109,13 +117,13 @@ export default function Home() {
                   <p className="text-[10px] text-slate-400 font-mono font-bold">S/N: {imp.serial}</p>
                 </div>
                 <span className={`px-3 py-1 text-[10px] font-black rounded-full uppercase ${
-                  imp.status === 'Finalizado' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
+                  imp.status === 'Aguardando Peça' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                 }`}>
                   {imp.status}
                 </span>
               </div>
             )) : (
-              <p className="text-slate-400 text-center py-4 italic text-sm">Nenhuma entrada registrada.</p>
+              <p className="text-slate-400 text-center py-4 italic text-sm">Nenhuma entrada em andamento na bancada.</p>
             )}
           </div>
         </div>
@@ -124,7 +132,7 @@ export default function Home() {
         <div className="bg-slate-900 p-8 rounded-3xl text-white flex flex-col justify-center relative overflow-hidden shadow-xl shadow-slate-300">
           <div className="relative z-10">
             <h3 className="text-3xl font-black mb-2">Pronto para começar?</h3>
-            <p className="text-slate-400 mb-8 max-w-xs font-medium">Registre uma nova entrada de equipamento ou atualize seu estoque de peças.</p>
+            <p className="text-slate-400 mb-8 max-w-xs font-medium">Registre uma nova entrada de equipamento ou update seu estoque de peças.</p>
             <button 
               onClick={() => navigate('/manutencao')}
               className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black transition-all transform hover:scale-105 flex items-center gap-2 uppercase text-sm tracking-wider"

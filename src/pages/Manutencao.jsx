@@ -11,7 +11,9 @@ const MODELOS_DISPONIVEIS = {
   "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
   "Phantom": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Phantom"],
-  "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"]
+  "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
+  "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"] // 👈 Adicionado aqui!
+
 };
 
 export default function Manutencao() {
@@ -21,9 +23,10 @@ export default function Manutencao() {
   const [chamadoSelecionado, setChamadoSelecionado] = useState(null);
 
   useEffect(() => {
+    // 🌟 Atualizado: Esconde ordens com status "Finalizado" E "Faturado"
     const q = query(
       collection(db, "atendimentos"), 
-      where("status", "!=", "Finalizado")
+      where("status", "not-in", ["Finalizado", "Faturado"])
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -34,7 +37,10 @@ export default function Manutencao() {
         return dataB - dataA;
       });
       setChamados(dataOrdenada);
+    }, (error) => {
+      console.error("Erro ao carregar bancada:", error);
     });
+    
     return () => unsubscribe();
   }, []);
 
