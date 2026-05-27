@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, where, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { X, Package, Clock, CheckCircle, FileText } from 'lucide-react';
 
@@ -11,16 +11,55 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
 
   useEffect(() => {
     const buscarPecas = async () => {
-      // Busca apenas peças compatíveis com o modelo da impressora
-      const q = query(collection(db, "estoque_pecas"), where("modelo", ">=", chamado.modelo.split(' ')[0]));
-      const querySnapshot = await getDocs(q);
-      const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // FILTRO INTELIGENTE: Remove da listagem inicial qualquer peça que já esteja zerada no banco
-      const apenasComEstoqueDisponivel = listaDados.filter(p => p.qtd > 0);
-      
-      setPecasEstoque(apenasComEstoqueDisponivel);
+      try {
+        // Busca ampla por marca para evitar as limitações de paginação alfabética do Firestore (>=)
+        const marcaImpressora = chamado.marca || "Brother";
+        const q = query(collection(db, "estoque_pecas"), where("marca", "==", marcaImpressora));
+        const querySnapshot = await getDocs(q);
+        const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        // Normaliza os termos do modelo atual da OS para a busca cruzada
+        const modeloCompleto = chamado.modelo.toLowerCase();
+        const termoCurto = modeloCompleto.replace('hl-', '').replace('dcp-', '').substring(0, 5); // Ex: "l510" ou "l565"
+        
+        // FILTRO INTELIGENTE E PADRONIZADO EM LOWERCASE
+        const apenasComEstoqueDisponivel = listaDados.filter(peca => {
+          if (peca.qtd <= 0) return false; // Remove itens zerados imediatamente
+
+          const nomePeca = peca.nome ? peca.nome.toLowerCase() : '';
+          const modeloPeca = peca.modelo ? peca.modelo.toLowerCase() : '';
+
+          // Verifica se a impressora atual da OS pertence à família L5000 / L6000
+          const ehMesmaFamilia = 
+            modeloCompleto.includes('l5102') || 
+            modeloCompleto.includes('l5652') || 
+            modeloCompleto.includes('l5000') || 
+            modeloCompleto.includes('l6000');
+
+          if (ehMesmaFamilia) {
+            // Se for da mesma família mecânica, valida compatibilidade cruzada por série, toner ou modelos irmãos
+            const pecaCompativelComFamilia = 
+              modeloPeca.includes('l5000') || 
+              modeloPeca.includes('l6000') || 
+              modeloPeca.includes('tn3472') ||
+              nomePeca.includes('tn3472') ||
+              modeloPeca.includes('l5652') || 
+              modeloPeca.includes('l5102');
+              
+            if (pecaCompativelComFamilia) return true;
+          }
+
+          // Fallback seguro: Procura correspondência direta de string do modelo ou termo curto
+          return modeloPeca.includes(termoCurto) || modeloPeca.includes(modeloCompleto);
+        });
+        
+        setPecasEstoque(apenasComEstoqueDisponivel);
+      } catch (error) {
+        console.error("Erro ao buscar peças:", error);
+        toast.error("Erro ao carregar peças compatíveis.");
+      }
     };
+
     if (chamado?.modelo) {
       buscarPecas();
     }
@@ -44,7 +83,6 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
 
         // REGRA DE OURO: Se a peça zerou agora, joga pro histórico e deleta do estoque ativo
         if (novaQtd <= 0) {
-          // Criamos o documento no histórico com a data final (hoje)
           transaction.set(doc(historicoRef), {
             marca: dadosPeca.marca,
             modelo: dadosPeca.modelo,
