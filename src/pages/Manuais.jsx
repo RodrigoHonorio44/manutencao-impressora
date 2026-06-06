@@ -51,7 +51,7 @@ const MANUAL_ERROS_IMPRESSORAS = {
   ]
 };
 
-// DIRETRIZES EXCLUSIVAS DE ACESSO AO MODO TÉCNICO (PRESETS POR MODELO)
+// DIRETRIZES EXCLUSIVAS DE ACESSO AO MODO TÉCNICO E MANUTENÇÃO DE BANCADA
 const INSTRUCOES_TECH_MODE = {
   "HP (Laser 408 / MFP 432)": {
     titulo: "Tech Mode (Menu de Engenharia)",
@@ -69,9 +69,22 @@ const INSTRUCOES_TECH_MODE = {
     alerta: "Essencial para resetar contadores de fusão e forçar calibração de sensores ópticos."
   },
   Brother: {
-    titulo: "Maintenance Mode (Modo Manutenção)",
-    procedimento: "Com a máquina ligada, pressione Menu ➔ * ➔ 2 ➔ 8 ➔ 6 ➔ 4 em sequência rápida (ou segure o botão Menu enquanto liga o cabo de força). Digite 99 para sair salvando as alterações.",
-    alerta: "Digite 88 para resetar o fusor ou ler log detalhado de atolamentos."
+    titulo: "Maintenance Mode (Modo Manutenção) & Resets de Peças",
+    procedimento: "DCP-L5652DN (Touch): Pressione 'Home' por 5s ➔ Segure a última linha em branco por 5s ➔ Digite *2864. || HL-L5102DW (Botões): Ligue a impressora mantendo o botão 'OK' pressionado até surgir 'MAINTENANCE'.",
+    codigosBrother: [
+      { num: "01", acao: "Inicialização completa dos parâmetros técnicos de fábrica." },
+      { num: "09", acao: "Imprime a folha de teste padrão (Test Print Pattern) para verificar cilindro e fusor." },
+      { num: "77", acao: "Imprime o relatório mestre com histórico completo de erros e logs de atolamento." },
+      { num: "80", acao: "Exibe os contadores de vida útil das peças. Para zerar, navegue até a peça e aperte Mono Start." },
+      { num: "82", acao: "Exibe o código de erro hexadecimal exato atual diretamente na tela." },
+      { num: "88", acao: "Reset crítico de erros térmicos do fuso e leitura de logs travados." },
+      { num: "99", acao: "Sair do Modo Técnico salvando alterações e reiniciando a máquina no modo normal." }
+    ],
+    procedimentosReset: [
+      { modelo: "HL-L5102DW (Modo Normal - Tampa Aberta)", passos: "Abra a tampa frontal ➔ Segure 'OK' + '▲' por 2s ➔ Selecione a peça (Cilindro, Fusor, Laser ou Roletes) ➔ Escolha '1 (Reset)' ➔ Feche a tampa." },
+      { modelo: "DCP-L5652DN (Modo Normal - Tampa Aberta)", passos: "Abra a tampa frontal ➔ Segure 'OK' por 2s (exibe Cilindro) ➔ Pressione '#' no teclado para abrir a lista completa (Fusor, Laser, Roletes) ➔ Escolha a peça e confirme." }
+    ],
+    alerta: "Sempre utilize o código 99 para fechar a rotina técnica e liberar a impressora de volta para o PC."
   },
   Samsung: {
     titulo: "Tech Menu Oculto",
@@ -177,17 +190,49 @@ export default function Manuais() {
 
       {/* BLOCO DINÂMICO DO MODO TÉCNICO - APARECE SÓ COM O MODELO SELECIONADO */}
       {marcaManual && INSTRUCOES_TECH_MODE[marcaManual] && (
-        <section className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 rounded-2xl border border-slate-700 shadow-md animate-fade-in space-y-3">
+        <section className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 rounded-2xl border border-slate-700 shadow-md animate-fade-in space-y-4">
           <div className="flex items-center gap-2 text-amber-400">
             <Info size={18} />
             <h3 className="font-bold text-sm tracking-wide uppercase">
               {INSTRUCOES_TECH_MODE[marcaManual].titulo} — {marcaManual}
             </h3>
           </div>
+          
           <p className="text-xs font-medium text-slate-300 leading-relaxed">
-            <strong className="text-white">Procedimento oficial:</strong> {INSTRUCOES_TECH_MODE[marcaManual].procedimento}
+            <strong className="text-white">Procedimento de Acesso:</strong> {INSTRUCOES_TECH_MODE[marcaManual].procedimento}
           </p>
-          <div className="text-[11px] font-semibold text-amber-300 bg-slate-800/60 inline-block px-2.5 py-1 rounded-lg border border-slate-700/60">
+
+          {/* LISTAGEM DOS PARÂMETROS NUMÉRICOS DA BROTHER */}
+          {INSTRUCOES_TECH_MODE[marcaManual].codigosBrother && (
+            <div className="pt-2 border-t border-slate-700 space-y-2">
+              <span className="text-[10px] font-bold tracking-wider text-amber-400 uppercase block">Comandos do Modo Maintenance (2 Dígitos):</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-medium">
+                {INSTRUCOES_TECH_MODE[marcaManual].codigosBrother.map((item, idx) => (
+                  <div key={idx} className="flex gap-2 bg-slate-800/40 p-2 rounded-lg border border-slate-700/40">
+                    <span className="font-mono font-black text-amber-400 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">{item.num}</span>
+                    <span className="text-slate-300 leading-tight">{item.acao}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* LISTAGEM DOS PROCEDIMENTOS DE RESET DE CONSUMÍVEIS (BANDAS, FUSOR, ROLETES) */}
+          {INSTRUCOES_TECH_MODE[marcaManual].procedimentosReset && (
+            <div className="pt-2 border-t border-slate-700 space-y-2">
+              <span className="text-[10px] font-bold tracking-wider text-emerald-400 uppercase block">Rotinas Rápidas de Reset (Após Troca de Peças):</span>
+              <div className="space-y-2 text-xs font-medium">
+                {INSTRUCOES_TECH_MODE[marcaManual].procedimentosReset.map((item, idx) => (
+                  <div key={idx} className="bg-slate-800/40 p-2.5 rounded-lg border border-slate-700/40 space-y-1">
+                    <span className="text-slate-200 font-bold block text-[11px]">{item.modelo}:</span>
+                    <p className="text-slate-300 leading-relaxed font-normal">{item.passos}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="text-[11px] font-semibold text-amber-300 bg-slate-800/60 inline-block px-2.5 py-1 rounded-lg border border-slate-700/60 w-full sm:w-auto">
             ⚠️ Atenção: {INSTRUCOES_TECH_MODE[marcaManual].alerta}
           </div>
         </section>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-import { DollarSign, CalendarDays, BarChart3, Users, Printer, FileText, CheckCircle2 } from 'lucide-react';
+import { collection, query, onSnapshot, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { DollarSign, FileText, BarChart3, Users, Printer, CheckCircle2, Plus, TrendingDown, Wallet } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Financas() {
@@ -10,13 +10,19 @@ export default function Financas() {
   const [anoSelecionado, setAnoSelecionado] = useState(agora.getFullYear());
   const [abaAtiva, setAbaAtiva] = useState('faturadas'); // 'faturadas' ou 'pendentes'
   
+  // Estado para o formulário de novas despesas
+  const [novaDespesa, setNovaDespesa] = useState({ descricao: '', valor: '', categoria: 'Operacional' });
+
   const [dadosFiltrados, setDadosFiltrados] = useState({
     totalFaturado: 0,
+    totalDespesas: 0,
+    lucroLiquido: 0,
     qtdNotas: 0,
     ticketMedio: 0,
     notasFaturadas: [],
     notasPendentes: [],
-    rankingClientes: []
+    rankingClientes: [],
+    listaDespesas: []
   });
 
   const meses = [
@@ -28,27 +34,30 @@ export default function Financas() {
 
   useEffect(() => {
     const qFaturamento = query(collection(db, "historico_notas"));
+    const qDespesas = query(collection(db, "despesas_empresa"));
     
-    const unsubscribe = onSnapshot(qFaturamento, (snapshot) => {
+    let notasCarregadas = [];
+    let despesasCarregadas = [];
+
+    // Função unificada para processar finanças após retornos do Firebase
+    const processarDadosFinancas = (notas, despesas) => {
       let somaPeriodo = 0;
       let contagemNotas = 0;
+      let somaDespesas = 0;
       const faturadas = [];
       const pendentes = [];
       const mapaClientes = {};
+      const despesasFiltradas = [];
 
-      snapshot.docs.forEach(doc => {
-        const dados = doc.data();
-        
-        // Data de base para o filtro por mês/ano
+      // 1. Processar Notas / Receitas
+      notas.forEach(dados => {
         const dataReferencia = dados.data_faturamento?.toDate() || dados.data_fechamento?.toDate();
-        
         if (dataReferencia) {
           const m = dataReferencia.getMonth();
           const a = dataReferencia.getFullYear();
 
           if (m === Number(mesSelecionado) && a === Number(anoSelecionado)) {
             const notaTratada = {
-              id: doc.id,
               ...dados,
               data_formatada: dataReferencia.toLocaleDateString('pt-BR')
             };
@@ -58,7 +67,6 @@ export default function Financas() {
               contagemNotas += 1;
               faturadas.push(notaTratada);
 
-              // Ranking computa apenas o que de fato foi faturado
               dados.servicos?.forEach(s => {
                 if (s.cliente) {
                   mapaClientes[s.cliente] = (mapaClientes[s.cliente] || 0) + 70;
@@ -71,32 +79,87 @@ export default function Financas() {
         }
       });
 
+      // 2. Processar Despesas (MEI, Insumos, Ferramentas)
+      despesas.forEach(dados => {
+        const dataDespesa = dados.data_gasto?.toDate();
+        if (dataDespesa) {
+          const m = dataDespesa.getMonth();
+          const a = dataDespesa.getFullYear();
+
+          if (m === Number(mesSelecionado) && a === Number(anoSelecionado)) {
+            somaDespesas += dados.valor || 0;
+            despesasFiltradas.push({
+              ...dados,
+              data_formatada: dataDespesa.toLocaleDateString('pt-BR')
+            });
+          }
+        }
+      });
+
       const rankingOrdenado = Object.keys(mapaClientes).map(nome => ({
         nome,
         total: mapaClientes[nome]
       })).sort((a, b) => b.total - a.total);
 
-      // Ordenação: mais recentes primeiro
       const ordenarPorData = (arr) => arr.sort((a, b) => {
-        const dA = a.data_faturamento?.toDate() || a.data_fechamento?.toDate();
-        const dB = b.data_faturamento?.toDate() || b.data_fechamento?.toDate();
+        const dA = a.data_faturamento?.toDate() || a.data_fechamento?.toDate() || a.data_gasto?.toDate();
+        const dB = b.data_faturamento?.toDate() || b.data_fechamento?.toDate() || b.data_gasto?.toDate();
         return dB - dA;
       });
 
       setDadosFiltrados({
         totalFaturado: somaPeriodo,
+        totalDespesas: somaDespesas,
+        lucroLiquido: somaPeriodo - somaDespesas,
         qtdNotas: contagemNotas,
         ticketMedio: contagemNotas > 0 ? (somaPeriodo / contagemNotas) : 0,
         notasFaturadas: ordenarPorData(faturadas),
         notasPendentes: ordenarPorData(pendentes),
-        rankingClientes: rankingOrdenado
+        rankingClientes: rankingOrdenado,
+        listaDespesas: ordenarPorData(despesasFiltradas)
       });
+    };
+
+    const unsubNotas = onSnapshot(qFaturamento, (snapshot) => {
+      notasCarregadas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      processarDadosFinancas(notasCarregadas, despesasCarregadas);
     });
 
-    return () => unsubscribe();
+    const unsubDespesas = onSnapshot(qDespesas, (snapshot) => {
+      despesasCarregadas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      processarDadosFinancas(notasCarregadas, despesasCarregadas);
+    });
+
+    return () => {
+      unsubNotas();
+      unsubDespesas();
+    };
   }, [mesSelecionado, anoSelecionado]);
 
-  // Função para mudar o status da nota para Faturado
+  // Função para salvar despesa no Firebase
+  const cadastrarDespesa = async (e) => {
+    e.preventDefault();
+    if (!novaDespesa.descricao || !novaDespesa.valor) {
+      toast.error("Preencha a descrição e o valor da despesa!");
+      return;
+    }
+
+    try {
+      await addDoc(collection(db, "despesas_empresa"), {
+        descricao: novaDespesa.descricao,
+        valor: Number(novaDespesa.valor),
+        categoria: novaDespesa.categoria,
+        data_gasto: new Date()
+      });
+
+      toast.success("Despesa registrada com sucesso!");
+      setNovaDespesa({ descricao: '', valor: '', categoria: 'Operacional' });
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao registrar gasto.");
+    }
+  };
+
   const faturarNota = async (id) => {
     try {
       const notaRef = doc(db, "historico_notas", id);
@@ -211,7 +274,6 @@ export default function Financas() {
           <p className="text-slate-500 font-medium">Controle o fluxo de caixa de notas liquidadas e gerencie cobranças pendentes.</p>
         </div>
 
-        {/* SELECTORES DE FILTRO */}
         <div className="flex items-center gap-3 w-full md:w-auto">
           <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 w-full md:w-auto">
             <select 
@@ -237,76 +299,137 @@ export default function Financas() {
         </div>
       </header>
 
-      {/* METRICAS DO PERÍODO FILTRADO (Apenas o que de fato está Faturado) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* METRICAS DO PERÍODO FILTRADO (4 Cards para Fluxo de Caixa Completo) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Faturamento Recebido</p>
-            <h3 className="text-3xl font-black text-emerald-600">R$ {dadosFiltrados.totalFaturado.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-slate-800">R$ {dadosFiltrados.totalFaturado.toFixed(2)}</h3>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-500">
-            <DollarSign size={24} />
+          <div className="w-11 h-11 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-500">
+            <DollarSign size={22} />
           </div>
         </div>
 
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lotes Liquidados</p>
-            <h3 className="text-3xl font-black text-slate-800">{dadosFiltrados.qtdNotas.toString().padStart(2, '0')}</h3>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total de Gastos (Saídas)</p>
+            <h3 className="text-2xl font-black text-rose-600">R$ {dadosFiltrados.totalDespesas.toFixed(2)}</h3>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-500">
-            <FileText size={24} />
+          <div className="w-11 h-11 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-500">
+            <TrendingDown size={22} />
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
+          <div className="space-y-1">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lucro Líquido Real</p>
+            <h3 className={`text-2xl font-black ${dadosFiltrados.lucroLiquido >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              R$ {dadosFiltrados.lucroLiquido.toFixed(2)}
+            </h3>
+          </div>
+          <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-500">
+            <Wallet size={22} />
           </div>
         </div>
 
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ticket Médio Líquido</p>
-            <h3 className="text-3xl font-black text-slate-800">R$ {dadosFiltrados.ticketMedio.toFixed(2)}</h3>
+            <h3 className="text-2xl font-black text-slate-800">R$ {dadosFiltrados.ticketMedio.toFixed(2)}</h3>
           </div>
-          <div className="w-12 h-12 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-500">
-            <BarChart3 size={24} />
+          <div className="w-11 h-11 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-500">
+            <BarChart3 size={22} />
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* COLUNA 1: RANKING DE FATURAMENTO POR CLIENTE */}
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm lg:col-span-1 flex flex-col">
-          <h3 className="font-black text-slate-800 text-sm uppercase tracking-wide mb-4 flex items-center gap-2">
-            <Users size={16} className="text-slate-400" /> Recebido por Cliente
-          </h3>
+        {/* COLUNA 1: ADICIONAR DESPESA & RANKING */}
+        <div className="space-y-6 lg:col-span-1">
           
-          <div className="space-y-3 flex-1 overflow-y-auto max-h-[480px] pr-2">
-            {dadosFiltrados.rankingClientes.map((cli, idx) => (
-              <div key={idx} className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-100 rounded-2xl">
-                <div>
-                  <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-black mr-2">#{idx + 1}</span>
-                  <span className="font-bold text-slate-700 text-xs uppercase">{cli.nome}</span>
-                </div>
-                <span className="font-black text-slate-800 text-xs">R$ {cli.total.toFixed(2)}</span>
+          {/* PAINEL DE REGISTRO DE GASTOS */}
+          <div className="bg-slate-900 p-6 rounded-3xl text-white shadow-md">
+            <h3 className="font-black text-xs uppercase tracking-wider mb-4 flex items-center gap-2">
+              <Plus size={16} className="text-blue-400" /> Lançar Despesa da Empresa
+            </h3>
+            <form onSubmit={cadastrarDespesa} className="space-y-3.5">
+              <div>
+                <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Descrição do Gasto</label>
+                <input 
+                  type="text" 
+                  placeholder="Ex: Guia MEI, Graxa de Silicone..."
+                  value={novaDespesa.descricao}
+                  onChange={(e) => setNovaDespesa({...novaDespesa, descricao: e.target.value})}
+                  className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-blue-500 text-slate-200"
+                />
               </div>
-            ))}
 
-            {dadosFiltrados.rankingClientes.length === 0 && (
-              <p className="text-slate-400 italic text-center text-xs py-10">Nenhum faturamento liquidado neste período.</p>
-            )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Valor (R$)</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    placeholder="0.00"
+                    value={novaDespesa.valor}
+                    onChange={(e) => setNovaDespesa({...novaDespesa, valor: e.target.value})}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-blue-500 text-slate-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Classificação</label>
+                  <select
+                    value={novaDespesa.categoria}
+                    onChange={(e) => setNovaDespesa({...novaDespesa, categoria: e.target.value})}
+                    className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl px-2 py-2 text-xs font-bold focus:outline-none focus:border-blue-500 text-slate-300 cursor-pointer"
+                  >
+                    <option value="Operacional">Insumos/Bancada</option>
+                    <option value="MEI / Taxas">MEI / Impostos</option>
+                    <option value="Ferramental">Equipamentos</option>
+                    <option value="Estrutura">Infraestrutura</option>
+                  </select>
+                </div>
+              </div>
+
+              <button type="submit" className="w-full mt-2 py-2.5 bg-blue-600 hover:bg-blue-500 transition-all text-white font-black text-xs uppercase tracking-wider rounded-xl">
+                Confirmar Lançamento
+              </button>
+            </form>
+          </div>
+
+          {/* RANKING CLIENTES */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
+            <h3 className="font-black text-slate-800 text-xs uppercase tracking-wide mb-4 flex items-center gap-2">
+              <Users size={16} className="text-slate-400" /> Recebido por Cliente
+            </h3>
+            <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
+              {dadosFiltrados.rankingClientes.map((cli, idx) => (
+                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                  <div>
+                    <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-black mr-2">#{idx + 1}</span>
+                    <span className="font-bold text-slate-700 text-xs uppercase">{cli.nome}</span>
+                  </div>
+                  <span className="font-black text-slate-800 text-xs">R$ {cli.total.toFixed(2)}</span>
+                </div>
+              ))}
+              {dadosFiltrados.rankingClientes.length === 0 && (
+                <p className="text-slate-400 italic text-center text-xs py-4">Nenhum faturamento registrado.</p>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* COLUNA 2: HISTÓRICO GERENCIA DE NOTAS (COM ALTERAÇÃO DE ABAS) */}
+        {/* COLUNA 2 E 3: HISTÓRICO DE MOVIMENTAÇÕES (NOTAS VS DESPESAS) */}
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm lg:col-span-2 flex flex-col">
           
-          {/* SELETOR DE ABAS INTERNAS */}
           <div className="flex border-b border-slate-200 mb-4 justify-between items-center">
             <div className="flex gap-4">
               <button
                 onClick={() => setAbaAtiva('faturadas')}
                 className={`pb-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 px-1 ${
-                  abaAtiva === 'faturadas' 
-                    ? 'border-emerald-500 text-emerald-600' 
-                    : 'border-transparent text-slate-400 hover:text-slate-600'
+                  abaAtiva === 'faturadas' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-slate-400 hover:text-slate-600'
                 }`}
               >
                 Faturadas ({dadosFiltrados.notasFaturadas.length})
@@ -314,22 +437,26 @@ export default function Financas() {
               <button
                 onClick={() => setAbaAtiva('pendentes')}
                 className={`pb-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 px-1 ${
-                  abaAtiva === 'pendentes' 
-                    ? 'border-amber-500 text-amber-600' 
-                    : 'border-transparent text-slate-400 hover:text-slate-600'
+                  abaAtiva === 'pendentes' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-400 hover:text-slate-600'
                 }`}
               >
-                Aguardando Faturamento ({dadosFiltrados.notasPendentes.length})
+                Pendentes ({dadosFiltrados.notasPendentes.length})
+              </button>
+              <button
+                onClick={() => setAbaAtiva('despesas')}
+                className={`pb-3 text-xs font-black uppercase tracking-wider transition-all border-b-2 px-1 ${
+                  abaAtiva === 'despesas' ? 'border-rose-500 text-rose-600' : 'border-transparent text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                Saídas / Gastos ({dadosFiltrados.listaDespesas.length})
               </button>
             </div>
-            
-            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
-              Mês de {meses[mesSelecionado]}
-            </span>
+            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">Mês de {meses[mesSelecionado]}</span>
           </div>
 
-          <div className="space-y-3 flex-1 overflow-y-auto max-h-[420px] pr-2">
-            {listaExibida.map((nota) => (
+          <div className="space-y-3 flex-1 overflow-y-auto max-h-[500px] pr-2">
+            {/* RENDERIZAÇÃO DE NOTAS DE SERVIÇOS (ABAS FATURADAS OU PENDENTES) */}
+            {abaAtiva !== 'despesas' && listaExibida.map((nota) => (
               <div key={nota.id} className="p-4 border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all rounded-2xl flex justify-between items-center gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -338,12 +465,8 @@ export default function Financas() {
                     }`}>
                       {nota.status === 'faturado' ? `Faturado em ${nota.data_formatada}` : `Gerado em ${nota.data_formatada}`}
                     </span>
-                    <span className="text-[10px] font-mono text-slate-400 font-bold">
-                      ID: {nota.id.substring(0, 8).toUpperCase()}
-                    </span>
-                    <span className="text-xs font-bold text-blue-600">
-                      ({nota.qtd_itens} {nota.qtd_itens === 1 ? 'item' : 'itens'})
-                    </span>
+                    <span className="text-[10px] font-mono text-slate-400 font-bold">ID: {nota.id.substring(0, 8).toUpperCase()}</span>
+                    <span className="text-xs font-bold text-blue-600">({nota.qtd_itens} {nota.qtd_itens === 1 ? 'item' : 'itens'})</span>
                   </div>
                   <p className="text-xs text-slate-500 truncate max-w-sm sm:max-w-md">
                     {nota.servicos?.map(s => `${s.marca} (${s.cliente})`).join(', ')}
@@ -352,8 +475,6 @@ export default function Financas() {
 
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="font-black text-slate-800 text-sm mr-2">R$ {nota.valor_total?.toFixed(2)}</span>
-                  
-                  {/* Botão de Ação: Faturar Nota (Aparece apenas na aba de pendentes) */}
                   {nota.status !== 'faturado' && (
                     <button
                       onClick={() => faturarNota(nota.id)}
@@ -363,11 +484,9 @@ export default function Financas() {
                       <CheckCircle2 size={14} />
                     </button>
                   )}
-
                   <button
                     onClick={() => executarReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 transition-all"
-                    title="Imprimir Via"
                   >
                     <Printer size={14} />
                   </button>
@@ -375,16 +494,30 @@ export default function Financas() {
               </div>
             ))}
 
-            {listaExibida.length === 0 && (
-              <p className="text-slate-400 italic text-center text-xs py-10">
-                Nenhum lote de nota encontrado nesta categoria para o período selecionado.
-              </p>
+            {/* RENDERIZAÇÃO DA NOVA ABA EXCLUSIVA DE GASTOS / SAÍDAS */}
+            {abaAtiva === 'despesas' && dadosFiltrados.listaDespesas.map((desp) => (
+              <div key={desp.id} className="p-4 border border-slate-100 bg-rose-50/20 hover:bg-rose-50/40 transition-all rounded-2xl flex justify-between items-center">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider text-rose-700 bg-rose-100 border border-rose-200">
+                      {desp.categoria}
+                    </span>
+                    <span className="text-[11px] font-bold text-slate-400">{desp.data_formatada}</span>
+                  </div>
+                  <p className="font-bold text-slate-700 text-sm uppercase">{desp.descricao}</p>
+                </div>
+                <span className="font-black text-rose-600 text-sm font-mono">- R$ {desp.valor.toFixed(2)}</span>
+              </div>
+            ))}
+
+            {((abaAtiva === 'despesas' && dadosFiltrados.listaDespesas.length === 0) || 
+              (abaAtiva !== 'despesas' && listaExibida.length === 0)) && (
+              <p className="text-slate-400 italic text-center text-xs py-10">Nenhum registro encontrado para este período.</p>
             )}
           </div>
         </div>
 
       </div>
-
     </div>
   );
 }

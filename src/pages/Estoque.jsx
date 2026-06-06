@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, doc, deleteDoc } from 'firebase/firestore';
-import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2 } from 'lucide-react'; // Importados novos ícones
+import { collection, addDoc, serverTimestamp, query, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2, Eye, X, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Mantido seu catálogo)
+// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo mantido)
 const CATALOGO_IMPRESSORAS = {
   Brother: {
     modelos: ["DCP-L5652DN", "MFC-L5702DN", "DCP-L5502DN", "HL-L5102DW"],
@@ -51,45 +51,138 @@ const CATALOGO_IMPRESSORAS = {
       { nome: "Gaveta de Papel / Cassete Série M404", pn: "RM2-5394-000", obs: "Gaveta frontal de plástico" },
       { nome: "Solenoide de Registro (Série M404)", pn: "RK2-1481-000", obs: "Controla o tempo de subida da folha" }
     ]
-  },
-  Samsung: {
-    modelos: ["ProXpress M4020ND", "ProXpress M3320ND", "SCX-4623F"],
-    pecas: [
-      { nome: "Película de Fusão (Teflon)", pn: "JC66-02715A", obs: "Série SL-M (Toner D203)" },
-      { nome: "Rolo Pressor", pn: "JC66-02714A", obs: "Série SL-M (Toner D203)" },
-      { nome: "Bucha do Rolo Pressor (Par)", pn: "JC61-04098A", obs: "Buchas plásticas pretas das pontas" },
-      { nome: "Engrenagem de Saída do Fusor", pn: "JC66-02722A", obs: "Engrenagem acoplada ao fusor" },
-      { nome: "Rolo Pick-up Roller (Rolete de Tração)", pn: "JC93-00540A", obs: "Compatível com rolete da HP 408" },
-      { nome: "Friction Pad / Separation Pad", pn: "JC93-00522A", obs: "Borracha separadora de folhas" },
-      { nome: "Solenoide de Alimentação", pn: "JC47-00033B", obs: "Bobina acionadora do rolete" },
-      { nome: "Placa Fonte de Alimentação (110v)", pn: "JC44-00097E", obs: "M4020 / M3320 fonte" },
-      { nome: "Placa Lógica Principal", pn: "JC92-02434A", obs: "Placa lógica com saídas USB/Rede" },
-      { nome: "Gaveta de Papel Completa", pn: "JC93-00548A", obs: "Bandeja cassete inferior" },
-      { nome: "Painel Display LCD", pn: "JC92-02441A", obs: "Placa de botões e tela de agendamento" }
-    ]
   }
 };
 
 export default function Estoque() {
   const [pecas, setPecas] = useState([]);
-  
-  // NOVO ESTADO: Controla se estamos vendo as peças ativas ou as esgotadas (arquivadas automaticamente)
-  const [verFiltroStatus, setVerFiltroStatus] = useState('disponivel'); // 'disponivel' ou 'esgotado'
-  
+  const [verFiltroStatus, setVerFiltroStatus] = useState('disponivel');
   const [marcaSelecionada, setMarcaSelecionada] = useState('');
   const [modeloSelecionada, setModeloSelecionada] = useState('');
   const [pecaObjetoSelecionado, setPecaObjetoSelecionado] = useState(null);
   const [quantidade, setQuantidade] = useState('');
   const [termoBusca, setTermoBusca] = useState('');
+  
+  // Estados de controle do Modal e histórico cruzado
+  const [itemSelecionadoRastrear, setItemSelecionadoRastrear] = useState(null);
+  const [historicoAtendimentos, setHistoricoAtendimentos] = useState([]);
+  const [carregandoAtendimentos, setCarregandoAtendimentos] = useState(false);
 
+  // 1. Escuta a coleção correspondente à aba ativa (Estoque ou Arquivo Zerado)
   useEffect(() => {
-    const q = query(collection(db, "estoque_pecas"), orderBy("data_entrada", "desc"));
+    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
+    const q = query(collection(db, nomeColecao));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      data.sort((a, b) => {
+        const obterTempo = (item) => {
+          const campoData = item.data_fim || item.data_entrada;
+          if (!campoData) return 0;
+          if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
+          if (campoData.seconds) return campoData.seconds * 1000;
+          const dataTentativa = new Date(campoData).getTime();
+          return isNaN(dataTentativa) ? 0 : dataTentativa;
+        };
+        return obterTempo(b) - obterTempo(a);
+      });
+
       setPecas(data);
     });
     return () => unsubscribe();
-  }, []);
+  }, [verFiltroStatus]);
+
+  // 2. Busca e Varredura Avançada tratando 'pecas_utilizadas' como Array
+  useEffect(() => {
+    if (!itemSelecionadoRastrear) {
+      setHistoricoAtendimentos([]);
+      return;
+    }
+
+    setCarregandoAtendimentos(true);
+
+    const qAtendimentos = query(collection(db, "atendimentos"));
+
+    const unsubscribe = onSnapshot(qAtendimentos, (snapshot) => {
+      const todosAtendimentos = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // Nome salvo no estoque (Ex: "Película de Fusão (Metálica/Alta Performance) - (Part Number: LY9012001)...")
+      const textoPecaCompleto = (itemSelecionadoRastrear.nome || '').toLowerCase();
+
+      // Tentativa de extrair palavras chaves ou Part Number (Ex: LY9012001) para conferência flexível
+      let partNumberIsolado = "";
+      const matchPN = textoPecaCompleto.match(/part number:\s*([a-zA-Z0-9_-]+)/);
+      if (matchPN && matchPN[1]) {
+        partNumberIsolado = matchPN[1].toLowerCase().trim();
+      }
+
+      // Filtra os atendimentos no Frontend de forma resiliente
+      const filtrados = todosAtendimentos.filter(atendimento => {
+        const pecasUtilizadas = atendimento.pecas_utilizadas;
+
+        // Se o campo pecas_utilizadas for uma Array (conforme os logs do Firestore)
+        if (Array.isArray(pecasUtilizadas)) {
+          return pecasUtilizadas.some(pecaString => {
+            const nomePecaAtendimento = pecaString.toLowerCase();
+
+            // Verifica se o texto do atendimento cita parte do nome do estoque ou vice-versa
+            const batePorTexto = (
+              nomePecaAtendimento.includes(textoPecaCompleto) ||
+              textoPecaCompleto.includes(nomePecaAtendimento)
+            );
+
+            // Verifica se o part number gerado no estoque bate com o texto simplificado do atendimento
+            const batePorPartNumber = partNumberIsolado && nomePecaAtendimento.includes(partNumberIsolado);
+
+            return batePorTexto || batePorPartNumber;
+          });
+        }
+
+        // Fallback caso venha como String simples em chamados antigos
+        if (typeof pecasUtilizadas === 'string') {
+          const stringPeca = pecasUtilizadas.toLowerCase();
+          return stringPeca.includes(textoPecaCompleto) || textoPecaCompleto.includes(stringPeca);
+        }
+
+        return false;
+      });
+
+      // Ordenação cronológica baseada na data de finalização ou entrada do chamado
+      filtrados.sort((a, b) => {
+        const obterTempo = (x) => {
+          const d = x.data_finalizacao || x.data_atendimento || x.data_entrada;
+          if (!d) return 0;
+          if (typeof d.toDate === 'function') return d.toDate().getTime();
+          return d.seconds ? d.seconds * 1000 : new Date(d).getTime();
+        };
+        return obterTempo(b) - obterTempo(a);
+      });
+
+      setHistoricoAtendimentos(filtrados);
+      setCarregandoAtendimentos(false);
+    }, (error) => {
+      console.error("Erro ao ler atendimentos:", error);
+      setCarregandoAtendimentos(false);
+    });
+
+    return () => unsubscribe();
+  }, [itemSelecionadoRastrear]);
+
+  const formatarData = (campoData) => {
+    if (!campoData) return '---';
+    if (typeof campoData.toDate === 'function') return campoData.toDate().toLocaleDateString('pt-BR');
+    if (campoData.seconds) return new Date(campoData.seconds * 1000).toLocaleDateString('pt-BR');
+    if (typeof campoData === 'string') {
+      const dataTentativa = new Date(campoData);
+      if (!isNaN(dataTentativa.getTime())) return dataTentativa.toLocaleDateString('pt-BR');
+      return campoData;
+    }
+    return '---';
+  };
 
   const handleMarcaChange = (e) => {
     setMarcaSelecionada(e.target.value);
@@ -128,39 +221,33 @@ export default function Estoque() {
     if (!confirmar) return;
 
     const loading = toast.loading("Removendo item do estoque...");
+    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
+
     try {
-      await deleteDoc(doc(db, "estoque_pecas", id));
+      await deleteDoc(doc(db, nomeColecao, id));
       toast.success("Item removido com sucesso!", { id: loading });
     } catch (error) {
       toast.error("Erro ao tentar excluir o item.", { id: loading });
     }
   };
 
-  // LÓGICA DO FILTRO: Separa automaticamente o que tem estoque do que está zerado
   const pecasFiltradas = pecas.filter(item => {
     const termo = termoBusca.toLowerCase();
-    const correspondeBusca = (
-      item.marca.toLowerCase().includes(termo) ||
-      item.modelo.toLowerCase().includes(termo) ||
-      item.nome.toLowerCase().includes(termo)
+    return (
+      item.marca?.toLowerCase().includes(termo) ||
+      item.modelo?.toLowerCase().includes(termo) ||
+      item.nome?.toLowerCase().includes(termo)
     );
-
-    // Se a aba selecionada for 'disponivel', mostra apenas qtd > 0. Se for 'esgotado', mostra qtd === 0
-    if (verFiltroStatus === 'disponivel') {
-      return correspondeBusca && item.qtd > 0;
-    } else {
-      return correspondeBusca && item.qtd <= 0;
-    }
   });
 
   return (
-    <div className="p-8 space-y-8 bg-slate-50 min-h-screen">
+    <div className="p-8 space-y-8 bg-slate-50 min-h-screen relative">
       <header>
         <h1 className="text-2xl font-bold text-slate-800">Estoque de Peças</h1>
         <p className="text-slate-500 font-medium">Controle inteligente e padronizado de insumos de assistência.</p>
       </header>
 
-      {/* Formulário Automatizado por Seleção */}
+      {/* Formulário Automatizado */}
       <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <div className="flex items-center gap-2 mb-2 text-blue-600">
           <PackagePlus size={24} />
@@ -168,107 +255,57 @@ export default function Estoque() {
         </div>
 
         <form onSubmit={handleAdicionar} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-          {/* Marca */}
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marca</label>
-            <select 
-              value={marcaSelecionada} 
-              onChange={handleMarcaChange}
-              className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-slate-700"
-            >
+            <select value={marcaSelecionada} onChange={handleMarcaChange} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700">
               <option value="">Selecione...</option>
-              {Object.keys(CATALOGO_IMPRESSORAS).map(marca => (
-                <option key={marca} value={marca}>{marca}</option>
-              ))}
+              {Object.keys(CATALOGO_IMPRESSORAS).map(marca => <option key={marca} value={marca}>{marca}</option>)}
             </select>
           </div>
 
-          {/* Modelo */}
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Modelo</label>
-            <select 
-              value={modeloSelecionada} 
-              onChange={(e) => setModeloSelecionada(e.target.value)}
-              disabled={!marcaSelecionada}
-              className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-slate-700 disabled:opacity-50"
-            >
+            <select value={modeloSelecionada} onChange={(e) => setModeloSelecionada(e.target.value)} disabled={!marcaSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50">
               <option value="">Selecione...</option>
-              {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].modelos.map(mod => (
-                <option key={mod} value={mod}>{mod}</option>
-              ))}
+              {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].modelos.map(mod => <option key={mod} value={mod}>{mod}</option>)}
             </select>
           </div>
 
-          {/* Componente Interno */}
           <div className="flex flex-col space-y-1.5 md:col-span-2">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno / Part Number</label>
-            <select 
-              value={pecaObjetoSelecionado ? JSON.stringify(pecaObjetoSelecionado) : ''} 
-              onChange={(e) => setPecaObjetoSelecionado(e.target.value ? JSON.parse(e.target.value) : null)}
-              disabled={!modeloSelecionada}
-              className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium text-slate-700 disabled:opacity-50"
-            >
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno</label>
+            <select value={pecaObjetoSelecionado ? JSON.stringify(pecaObjetoSelecionado) : ''} onChange={(e) => setPecaObjetoSelecionado(e.target.value ? JSON.parse(e.target.value) : null)} disabled={!modeloSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50">
               <option value="">Selecione a peça...</option>
-              {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].pecas.map((p, index) => (
-                <option key={index} value={JSON.stringify(p)}>
-                  {p.nome} (PN: {p.pn})
-                </option>
-              ))}
+              {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].pecas.map((p, index) => <option key={index} value={JSON.stringify(p)}>{p.nome} (PN: {p.pn})</option>)}
             </select>
           </div>
 
-          {/* Quantidade */}
           <div className="grid grid-cols-3 gap-2 md:col-span-1">
             <div className="col-span-1 flex flex-col space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase text-center tracking-wide">Qtd</label>
-              <input 
-                type="number" 
-                min="1"
-                value={quantidade}
-                onChange={(e) => setQuantidade(e.target.value)}
-                placeholder="0"
-                className="w-full p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-center font-bold text-slate-700"
-              />
+              <input type="number" min="1" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" className="w-full p-3 bg-slate-50 border rounded-xl text-center font-bold text-slate-700" />
             </div>
-            <button type="submit" className="col-span-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-all uppercase text-xs tracking-wider h-[46px] shadow-md shadow-blue-200">
+            <button type="submit" className="col-span-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 text-xs uppercase tracking-wider h-[46px]">
               Salvar
             </button>
           </div>
         </form>
       </section>
 
-      {/* NOVO CONTEÚDO: Menu de Filtro (Abas) e Pesquisa posicionados lado a lado */}
+      {/* Menu de Filtro e Barra de Busca */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        
-        {/* Abas para alternar entre Itens Ativos e Arquivados/Esgotados */}
         <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-300/40">
-          <button
-            onClick={() => setVerFiltroStatus('disponivel')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wide transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
+          <button onClick={() => setVerFiltroStatus('disponivel')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>
             <CheckCircle2 size={14} /> Em Estoque
           </button>
-          <button
-            onClick={() => setVerFiltroStatus('esgotado')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase tracking-wide transition-all ${verFiltroStatus === 'esgotado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-          >
+          <button onClick={() => setVerFiltroStatus('esgotado')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'esgotado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}>
             <Archive size={14} /> Arquivo (Zeradas)
           </button>
         </div>
 
-        {/* Barra de Pesquisa */}
         <div className="relative flex items-center bg-white border border-slate-200 rounded-2xl p-2 shadow-sm w-full max-w-md">
           <Search size={20} className="text-slate-400 ml-2" />
-          <input 
-            type="text"
-            placeholder="Buscar por Código (PN), Modelo ou Toner..."
-            value={termoBusca}
-            onChange={(e) => setTermoBusca(e.target.value)}
-            className="w-full p-2 pl-3 text-sm font-medium outline-none text-slate-700 bg-transparent"
-          />
-          {termoBusca && (
-            <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 hover:text-slate-600 font-bold px-2">Limpar</button>
-          )}
+          <input type="text" placeholder="Buscar por Código (PN), Modelo ou Toner..." value={termoBusca} onChange={(e) => setTermoBusca(e.target.value)} className="w-full p-2 pl-3 text-sm font-medium outline-none text-slate-700 bg-transparent" />
+          {termoBusca && <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 font-bold px-2">Limpar</button>}
         </div>
       </div>
 
@@ -290,55 +327,135 @@ export default function Estoque() {
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-100/70 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b">
               <tr>
-                <th className="p-4 pl-6">Data</th>
-                <th className="p-4">Marca / Modelo</th>
+                <th className="p-4 pl-6 w-32">{verFiltroStatus === 'disponivel' ? 'Data' : 'Data Fim'}</th>
+                <th className="p-4 w-48">Marca / Modelo</th>
                 <th className="p-4">Especificação Técnica & Observação Comercial</th>
                 <th className="p-4 text-center w-24">Qtd</th>
-                <th className="p-4 text-center w-20">Ações</th>
+                <th className="p-4 text-center w-24">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 font-medium text-sm">
               {pecasFiltradas.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
                   <td className="p-4 pl-6 text-xs text-slate-400">
-                    {item.data_entrada?.toDate().toLocaleDateString('pt-BR')}
+                    {formatarData(item.data_fim || item.data_entrada)}
                   </td>
                   <td className="p-4">
                     <p className="font-black text-slate-800 text-xs uppercase">{item.marca}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase">{item.modelo}</p>
                   </td>
                   <td className="p-4 text-xs text-slate-600 uppercase font-semibold">
-                    <div className="space-y-0.5">
-                      <p>{item.nome}</p>
-                    </div>
+                    <p>{item.nome}</p>
                   </td>
                   <td className="p-4 text-center">
-                    {/* Altera a cor do badge se a peça estiver zerada */}
-                    <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${item.qtd > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
-                      {item.qtd?.toString().padStart(2, '0')}
+                    <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${Number(item.qtd) > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
+                      {Number(item.qtd)?.toString().padStart(2, '0') || '00'}
                     </span>
                   </td>
-                  <td className="p-4 text-center">
+                  <td className="p-4 text-center flex items-center justify-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setItemSelecionadoRastrear(item)}
+                      className="text-slate-400 hover:text-blue-600 p-2 rounded-xl hover:bg-blue-50 transition-colors"
+                      title="Ver atendimentos que usaram esta peça"
+                    >
+                      <Eye size={16} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleExcluir(item.id, item.nome)}
                       className="text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-colors"
-                      title="Excluir lançamento"
                     >
                       <Trash2 size={16} />
                     </button>
                   </td>
                 </tr>
               ))}
-              {pecasFiltradas.length === 0 && (
-                <tr>
-                  <td colSpan="5" className="text-center py-10 text-slate-400 italic text-sm">Nenhum item nesta lista correspondente à sua busca.</td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
       </section>
+
+      {/* MODAL DE RASTREABILIDADE TRATANDO ARRAY DO FIRESTORE */}
+      {itemSelecionadoRastrear && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Header Modal */}
+            <div className="p-5 bg-slate-50 border-b flex justify-between items-center">
+              <div>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso Real em Atendimentos</span>
+                <h3 className="text-sm font-bold text-slate-800 mt-1 uppercase max-w-md truncate">{itemSelecionadoRastrear.nome}</h3>
+              </div>
+              <button onClick={() => setItemSelecionadoRastrear(null)} className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-400 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Conteúdo Modal */}
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-slate-500 font-medium">Buscando correspondências internas na lista de peças aplicadas dos chamados:</p>
+              
+              {carregandoAtendimentos ? (
+                <div className="flex flex-col items-center justify-center py-12 text-slate-400 space-y-2">
+                  <Loader2 size={24} className="animate-spin text-blue-600" />
+                  <span className="text-xs font-semibold">Vasculhando banco de atendimentos...</span>
+                </div>
+              ) : (
+                <div className="border rounded-xl overflow-hidden bg-slate-50">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-200/60 text-slate-600 uppercase font-bold text-[9px] tracking-wider border-b">
+                      <tr>
+                        <th className="p-3">Data Finalização</th>
+                        <th className="p-3">Modelo Máquina</th>
+                        <th className="p-3">Nº de Série</th>
+                        <th className="p-3 text-center">Nº O.S. / Local</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y text-slate-700 font-medium">
+                      {historicoAtendimentos.length > 0 ? (
+                        historicoAtendimentos.map((atendimento) => (
+                          <tr key={atendimento.id} className="hover:bg-white transition-colors">
+                            <td className="p-3 font-semibold text-slate-500">
+                              {formatarData(atendimento.data_finalizacao || atendimento.data_atendimento || atendimento.data_entrada)}
+                            </td>
+                            <td className="p-3 text-slate-900 uppercase font-bold">
+                              {atendimento.modelo || atendimento.modelo_impressora || '---'}
+                            </td>
+                            <td className="p-3 tracking-wider font-mono text-blue-600 font-bold uppercase">
+                              {atendimento.serial || atendimento.num_serie || '---'}
+                            </td>
+                            <td className="p-3 text-center text-slate-500">
+                              <span className="font-bold block text-slate-700">
+                                {atendimento.os ? `#${atendimento.os}` : `#${atendimento.id.substring(0, 5)}`}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block uppercase max-w-[150px] truncate mx-auto">
+                                {atendimento.cliente || 'Sem Local'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="4" className="text-center py-10 text-slate-400 italic font-normal">
+                            Nenhum registro encontrado. Certifique-se de que a descrição curta da peça foi inclusa na lista do atendimento.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer Modal */}
+            <div className="p-4 bg-slate-50 border-t flex justify-end">
+              <button onClick={() => setItemSelecionadoRastrear(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-300 transition-all">
+                Fechar Janela
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

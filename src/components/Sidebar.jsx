@@ -1,4 +1,4 @@
-import { LayoutDashboard, Package, Printer, FileText, History, LogOut, User, BookOpen, CircleDollarSign } from 'lucide-react'; // 🟢 IMPORTADO O ÍCONE CIRCLEDOLLARSIGN AQUI
+import { LayoutDashboard, Package, Printer, FileText, History, LogOut, User, BookOpen, CircleDollarSign, BarChart3 } from 'lucide-react';
 import { auth } from '../firebase/config';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -12,7 +12,8 @@ export default function Sidebar() {
     { icon: <Printer size={20} />, label: 'Manutenção', path: '/manutencao' },
     { icon: <Package size={20} />, label: 'Estoque Peças', path: '/estoque' },
     { icon: <FileText size={20} />, label: 'Notas de Serviço', path: '/notas' },
-    { icon: <CircleDollarSign size={20} />, label: 'Finanças', path: '/financas' }, // 🟢 NOVO BOTÃO ADICIONADO PARA TELA DE FINANÇAS
+    { icon: <CircleDollarSign size={20} />, label: 'Finanças', path: '/financas' },
+    { icon: <BarChart3 size={20} />, label: 'Relatório Gastos', path: '/relatorios' }, // 🟢 NOVO BOTÃO ADICIONADO PARA O RELATÓRIO DE CONSUMO
     { icon: <History size={20} />, label: 'Histórico', path: '/historico' },
     { icon: <BookOpen size={20} />, label: 'Manuais & Erros', path: '/manuais' },
   ];
@@ -32,7 +33,7 @@ export default function Sidebar() {
         </h2>
       </div>
       
-      <nav className="flex-1 px-4 space-y-1">
+      <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
         {menuItems.map((item) => (
           <button 
             key={item.label}

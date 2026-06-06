@@ -6,8 +6,9 @@ import Estoque from './pages/Estoque';
 import Manutencao from './pages/Manutencao';
 import NotasServico from './pages/NotasServico';
 import Historico from './pages/Historico'; 
-import Manuais from './pages/Manuais'; // IMPORTADA A CENTRAL DE ERROS E MANUAIS AQUI
-import Financas from './pages/Financas'; // 🟢 IMPORTADA A NOVA TELA DE FINANÇAS AQUI
+import Manuais from './pages/Manuais'; 
+import Financas from './pages/Financas'; 
+import RelatorioConsumo from './pages/RelatorioConsumo'; // 🟢 IMPORTADA A NOVA TELA DE RELATÓRIO DE CONSUMO AQUI
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -37,9 +38,10 @@ function App() {
         <Route path="/manutencao" element={<DashboardLayout><Manutencao /></DashboardLayout>} />
         <Route path="/estoque" element={<DashboardLayout><Estoque /></DashboardLayout>} />
         <Route path="/notas" element={<DashboardLayout><NotasServico /></DashboardLayout>} />
+        <Route path="/financas" element={<DashboardLayout><Financas /></DashboardLayout>} />
+        <Route path="/relatorios" element={<DashboardLayout><RelatorioConsumo /></DashboardLayout>} /> {/* 🟢 NOVA ROTA ADICIONADA PARA O RELATÓRIO */}
         <Route path="/historico" element={<DashboardLayout><Historico /></DashboardLayout>} />
-        <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} /> {/* NOVA ROTA ADICIONADA PARA MANUAIS */}
-        <Route path="/financas" element={<DashboardLayout><Financas /></DashboardLayout>} /> {/* 🟢 NOVA ROTA ADICIONADA PARA FINANÇAS */}
+        <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} />
 
         {/* Redirecionamento de segurança */}
         <Route path="*" element={<Navigate to="/" replace />} />
