@@ -68,29 +68,75 @@ export default function Estoque() {
   const [historicoAtendimentos, setHistoricoAtendimentos] = useState([]);
   const [carregandoAtendimentos, setCarregandoAtendimentos] = useState(false);
 
-  // 1. Escuta a coleção correspondente à aba ativa (Estoque ou Arquivo Zerado)
+  // 1. Escuta as coleções do Firestore e unifica as peças zeradas dinamicamente
   useEffect(() => {
-    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
-    const q = query(collection(db, nomeColecao));
+    if (verFiltroStatus === 'disponivel') {
+      const q = query(collection(db, "estoque_pecas"));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Mantém apenas itens ativos (Qtd > 0)
+        const ativos = data.filter(item => (Number(item.qtd) || 0) > 0);
+
+        ativos.sort((a, b) => {
+          const obterTempo = (item) => {
+            const campoData = item.data_entrada;
+            if (!campoData) return 0;
+            if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
+            return campoData.seconds ? campoData.seconds * 1000 : new Date(campoData).getTime() || 0;
+          };
+          return obterTempo(b) - obterTempo(a);
+        });
+        setPecas(ativos);
+      });
+      return () => unsubscribe();
+    } 
     
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
-      data.sort((a, b) => {
-        const obterTempo = (item) => {
-          const campoData = item.data_fim || item.data_entrada;
-          if (!campoData) return 0;
-          if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
-          if (campoData.seconds) return campoData.seconds * 1000;
-          const dataTentativa = new Date(campoData).getTime();
-          return isNaN(dataTentativa) ? 0 : dataTentativa;
-        };
-        return obterTempo(b) - obterTempo(a);
+    // Se estiver na aba "esgotado" (Arquivo Zeradas)
+    else {
+      let dadosEstoqueZerado = [];
+      let dadosHistoricoZerado = [];
+
+      const unificarEZerar = () => {
+        const unificados = [...dadosEstoqueZerado, ...dadosHistoricoZerado];
+        
+        // Remove duplicidades cruzadas por ID
+        const IDsUnicos = Array.from(new Set(unificados.map(a => a.id)))
+          .map(id => unificados.find(a => a.id === id));
+
+        IDsUnicos.sort((a, b) => {
+          const obterTempo = (item) => {
+            const campoData = item.data_fim || item.data_entrada;
+            if (!campoData) return 0;
+            if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
+            return campoData.seconds ? campoData.seconds * 1000 : new Date(campoData).getTime() || 0;
+          };
+          return obterTempo(b) - obterTempo(a);
+        });
+
+        setPecas(IDsUnicos);
+      };
+
+      // Escuta peças que zeraram na tabela principal
+      const qEstoque = query(collection(db, "estoque_pecas"));
+      const unsubscribeEstoque = onSnapshot(qEstoque, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        dadosEstoqueZerado = data.filter(item => (Number(item.qtd) || 0) === 0);
+        unificarEZerar();
       });
 
-      setPecas(data);
-    });
-    return () => unsubscribe();
+      // Escuta o banco legado histórico de itens finalizados
+      const qHistorico = query(collection(db, "historico_lotes_zerados"));
+      const unsubscribeHistorico = onSnapshot(qHistorico, (snapshot) => {
+        dadosHistoricoZerado = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        unificarEZerar();
+      });
+
+      return () => {
+        unsubscribeEstoque();
+        unsubscribeHistorico();
+      };
+    }
   }, [verFiltroStatus]);
 
   // 2. Busca e Varredura Avançada tratando 'pecas_utilizadas' como Array
@@ -110,39 +156,29 @@ export default function Estoque() {
         ...doc.data()
       }));
 
-      // Nome salvo no estoque (Ex: "Película de Fusão (Metálica/Alta Performance) - (Part Number: LY9012001)...")
       const textoPecaCompleto = (itemSelecionadoRastrear.nome || '').toLowerCase();
 
-      // Tentativa de extrair palavras chaves ou Part Number (Ex: LY9012001) para conferência flexível
       let partNumberIsolado = "";
       const matchPN = textoPecaCompleto.match(/part number:\s*([a-zA-Z0-9_-]+)/);
       if (matchPN && matchPN[1]) {
         partNumberIsolado = matchPN[1].toLowerCase().trim();
       }
 
-      // Filtra os atendimentos no Frontend de forma resiliente
       const filtrados = todosAtendimentos.filter(atendimento => {
         const pecasUtilizadas = atendimento.pecas_utilizadas;
 
-        // Se o campo pecas_utilizadas for uma Array (conforme os logs do Firestore)
         if (Array.isArray(pecasUtilizadas)) {
           return pecasUtilizadas.some(pecaString => {
             const nomePecaAtendimento = pecaString.toLowerCase();
-
-            // Verifica se o texto do atendimento cita parte do nome do estoque ou vice-versa
             const batePorTexto = (
               nomePecaAtendimento.includes(textoPecaCompleto) ||
               textoPecaCompleto.includes(nomePecaAtendimento)
             );
-
-            // Verifica se o part number gerado no estoque bate com o texto simplificado do atendimento
             const batePorPartNumber = partNumberIsolado && nomePecaAtendimento.includes(partNumberIsolado);
-
             return batePorTexto || batePorPartNumber;
           });
         }
 
-        // Fallback caso venha como String simples em chamados antigos
         if (typeof pecasUtilizadas === 'string') {
           const stringPeca = pecasUtilizadas.toLowerCase();
           return stringPeca.includes(textoPecaCompleto) || textoPecaCompleto.includes(stringPeca);
@@ -151,7 +187,6 @@ export default function Estoque() {
         return false;
       });
 
-      // Ordenação cronológica baseada na data de finalização ou entrada do chamado
       filtrados.sort((a, b) => {
         const obterTempo = (x) => {
           const d = x.data_finalizacao || x.data_atendimento || x.data_entrada;
