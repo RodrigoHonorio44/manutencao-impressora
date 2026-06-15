@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, where, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { X, Package, Clock, CheckCircle, FileText } from 'lucide-react';
 
@@ -12,48 +12,78 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   useEffect(() => {
     const buscarPecas = async () => {
       try {
-        // Busca ampla por marca para evitar as limitações de paginação alfabética do Firestore (>=)
-        const marcaImpressora = chamado.marca || "Brother";
-        const q = query(collection(db, "estoque_pecas"), where("marca", "==", marcaImpressora));
-        const querySnapshot = await getDocs(q);
+        // Busca ampla no estoque para evitar problemas de Case-Sensitive no where do Firestore
+        const querySnapshot = await getDocs(collection(db, "estoque_pecas"));
         const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
-        // Normaliza os termos do modelo atual da OS para a busca cruzada
-        const modeloCompleto = chamado.modelo.toLowerCase();
-        const termoCurto = modeloCompleto.replace('hl-', '').replace('dcp-', '').substring(0, 5); // Ex: "l510" ou "l565"
+        const marcaOs = (chamado.marca || '').toLowerCase().trim();
+        const modeloOs = (chamado.modelo || '').toLowerCase().trim();
         
-        // FILTRO INTELIGENTE E PADRONIZADO EM LOWERCASE
-        const apenasComEstoqueDisponivel = listaDados.filter(peca => {
-          if (peca.qtd <= 0) return false; // Remove itens zerados imediatamente
+        // Remove parênteses para isolar os números chaves (ex: transforma "(laser 408 / mfp 432)" em termos limpos)
+        const modeloLimpo = modeloOs.replace(/[\(\)]/g, ' '); 
+        const termosModelo = modeloLimpo.split(/[^a-zA-Z0-9]/).filter(t => t.length >= 3);
 
-          const nomePeca = peca.nome ? peca.nome.toLowerCase() : '';
-          const modeloPeca = peca.modelo ? peca.modelo.toLowerCase() : '';
+        // Identifica se o equipamento pertence à grande família mecânica Brother L5000 / L6000
+        const ehFamiliaBrotherL5000_L6000 = marcaOs.includes('brother') && (
+          modeloOs.includes('5000') || 
+          modeloOs.includes('6000') || 
+          modeloOs.includes('5102') || 
+          modeloOs.includes('5652') || 
+          modeloOs.includes('6202') || 
+          modeloOs.includes('6402')
+        );
 
-          // Verifica se a impressora atual da OS pertence à família L5000 / L6000
-          const ehMesmaFamilia = 
-            modeloCompleto.includes('l5102') || 
-            modeloCompleto.includes('l5652') || 
-            modeloCompleto.includes('l5000') || 
-            modeloCompleto.includes('l6000');
+        // TENTATIVA 1: Filtro cruzado por marca e termos do modelo
+        let filtradas = listaDados.filter(peca => {
+          if (peca.qtd <= 0) return false;
 
-          if (ehMesmaFamilia) {
-            // Se for da mesma família mecânica, valida compatibilidade cruzada por série, toner ou modelos irmãos
-            const pecaCompativelComFamilia = 
-              modeloPeca.includes('l5000') || 
-              modeloPeca.includes('l6000') || 
-              modeloPeca.includes('tn3472') ||
-              nomePeca.includes('tn3472') ||
-              modeloPeca.includes('l5652') || 
-              modeloPeca.includes('l5102');
-              
-            if (pecaCompativelComFamilia) return true;
+          const marcaPeca = peca.marca ? peca.marca.toLowerCase().trim() : '';
+          const nomePeca = peca.nome ? peca.nome.toLowerCase().trim() : '';
+          const modeloPeca = peca.modelo ? peca.modelo.toLowerCase().trim() : '';
+
+          // Validação flexível de marca
+          if (marcaOs && marcaPeca && marcaPeca !== marcaOs) {
+            if (!nomePeca.includes(marcaOs) && !modeloPeca.includes(marcaOs)) {
+              return false;
+            }
           }
 
-          // Fallback seguro: Procura correspondência direta de string do modelo ou termo curto
-          return modeloPeca.includes(termoCurto) || modeloPeca.includes(modeloCompleto);
+          // REGRA DE OURO PARA BROTHER SÉRIE L5000/L6000:
+          // Se a OS for desse ecossistema, puxa qualquer insumo compatível cadastrado para a série
+          if (ehFamiliaBrotherL5000_L6000) {
+            const pecaServeNaFamilia = 
+              modeloPeca.includes('l5000') || 
+              modeloPeca.includes('l6000') || 
+              modeloPeca.includes('5652') || 
+              modeloPeca.includes('5102') ||
+              nomePeca.includes('l5000') || 
+              nomePeca.includes('l6000') ||
+              nomePeca.includes('tn3472'); // Código do toner comum à fusão deles
+
+            if (pecaServeNaFamilia) return true;
+          }
+
+          // Confere se o modelo ou nome da peça possui o nome completo do modelo ou os termos isolados
+          const matchDireto = modeloPeca.includes(modeloOs) || modeloOs.includes(modeloPeca) || nomePeca.includes(modeloOs);
+          const matchTermos = termosModelo.some(termo => modeloPeca.includes(termo) || nomePeca.includes(termo));
+
+          return matchDireto || matchTermos;
         });
+
+        // TENTATIVA 2 (FALLBACK): Se a filtragem rígida sumir com os itens da tela,
+        // força a busca puramente pelos termos principais numéricos (ex: "408")
+        if (filtradas.length === 0 && termosModelo.length > 0) {
+          filtradas = listaDados.filter(peca => {
+            if (peca.qtd <= 0) return false;
+
+            const nomePeca = peca.nome ? peca.nome.toLowerCase().trim() : '';
+            const modeloPeca = peca.modelo ? peca.modelo.toLowerCase().trim() : '';
+
+            return termosModelo.some(termo => modeloPeca.includes(termo) || nomePeca.includes(termo));
+          });
+        }
         
-        setPecasEstoque(apenasComEstoqueDisponivel);
+        setPecasEstoque(filtradas);
       } catch (error) {
         console.error("Erro ao buscar peças:", error);
         toast.error("Erro ao carregar peças compatíveis.");
@@ -81,7 +111,6 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
         const dadosPeca = pDoc.data();
         const novaQtd = dadosPeca.qtd - 1;
 
-        // REGRA DE OURO: Se a peça zerou agora, joga pro histórico e deleta do estoque ativo
         if (novaQtd <= 0) {
           transaction.set(doc(historicoRef), {
             marca: dadosPeca.marca,
@@ -92,22 +121,17 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
             data_fim: serverTimestamp() 
           });
 
-          // Remove o item de estoque_pecas para sumir do seletor imediatamente
           transaction.delete(pecaRef);
         } else {
-          // Se ainda sobrou estoque, apenas diminui 1 normalmente
           transaction.update(pecaRef, { qtd: novaQtd });
         }
         
-        // Atualiza o relatório técnico da ordem de serviço
         const novoRelatorio = relatorio 
           ? `${relatorio}, trocado ${peca.nome}` 
           : `Efetuada a troca de: ${peca.nome}`;
         
-        // Atualização do estado local para renderizar na tela
         setRelatorio(novoRelatorio);
 
-        // Atualiza os dados do atendimento/OS na transação
         transaction.update(chamadoRef, { 
           pecas_utilizadas: arrayUnion(peca.nome), 
           relatorio_tecnico: novoRelatorio,
@@ -115,14 +139,13 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
         });
       });
 
-      // Atualiza a lista da tela removendo ou atualizando o item modificado
       setPecasEstoque(prev => 
         prev.map(p => {
           if (p.id === peca.id) {
             return { ...p, qtd: p.qtd - 1 };
           }
           return p;
-        }).filter(p => p.qtd > 0) // Esconde da tela caso tenha batido zero na hora
+        }).filter(p => p.qtd > 0)
       );
 
       toast.success(`${peca.nome} aplicada com sucesso!`, { id: loading });

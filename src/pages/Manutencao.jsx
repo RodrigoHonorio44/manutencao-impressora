@@ -1,19 +1,17 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, where } from 'firebase/firestore'; 
-import { Printer, ClipboardList, CheckCircle2, Settings, Hash } from 'lucide-react';
+import { collection, addDoc, serverTimestamp, query, onSnapshot, where, getDocs } from 'firebase/firestore'; 
+import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCircle, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
 
-// ESTRUTURA DE MARCAS E MODELOS SINCRONIZADA COM A CENTRAL DE ERROS
 const MODELOS_DISPONIVEIS = {
   "Brother": ["HL-L5102DW","HL-L6202DW", "DCP-L5652DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
   "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
   "Phantom": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Phantom"],
   "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
-  "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"] // 👈 Adicionado aqui!
-
+  "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"]
 };
 
 export default function Manutencao() {
@@ -22,8 +20,11 @@ export default function Manutencao() {
   const [modalAberto, setModalAberto] = useState(false);
   const [chamadoSelecionado, setChamadoSelecionado] = useState(null);
 
+  // Estados para o histórico do Serial
+  const [historicoEquipamento, setHistoricoEquipamento] = useState([]);
+  const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
+
   useEffect(() => {
-    // 🌟 Atualizado: Esconde ordens com status "Finalizado" E "Faturado"
     const q = query(
       collection(db, "atendimentos"), 
       where("status", "not-in", ["Finalizado", "Faturado"])
@@ -44,7 +45,49 @@ export default function Manutencao() {
     return () => unsubscribe();
   }, []);
 
-  // FUNÇÃO PARA GERAR NÚMERO DE OS (Ano + 10 dígitos aleatórios)
+  // Efeito para buscar histórico quando o Serial for digitado
+  useEffect(() => {
+    const buscarHistorico = async () => {
+      // Evita buscar se o campo estiver vazio
+      if (!form.serial.trim()) {
+        setHistoricoEquipamento([]);
+        return;
+      }
+
+      try {
+        // Busca todos os registros antigos desse mesmo serial no banco
+        const q = query(
+          collection(db, "atendimentos"),
+          where("serial", "==", form.serial.trim().toLowerCase())
+        );
+        const querySnapshot = await getDocs(q);
+        
+        const rascunhoHistorico = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        // Ordena do mais recente para o mais antigo baseado na data de entrada
+        rascunhoHistorico.sort((a, b) => {
+          const dataA = a.data_entrada?.seconds || 0;
+          const dataB = b.data_entrada?.seconds || 0;
+          return dataB - dataA;
+        });
+
+        setHistoricoEquipamento(rascunhoHistorico);
+      } catch (error) {
+        console.error("Erro ao buscar histórico do serial:", error);
+      }
+    };
+
+    // Aplica um pequeno delay (Debounce) para não sobrecarregar o Firebase a cada tecla digitada
+    const delayBusca = setTimeout(() => {
+      buscarHistorico();
+    }, 600);
+
+    return () => clearTimeout(delayBusca);
+  }, [form.serial]);
+
   const gerarNumeroOS = () => {
     const ano = new Date().getFullYear();
     const aleatorio = Math.floor(Math.random() * 10000000000).toString().padStart(10, '0');
@@ -61,14 +104,21 @@ export default function Manutencao() {
     const numeroOS = gerarNumeroOS();
 
     try {
+      // Salvando os dados padronizados em lowercase conforme sua estrutura de busca
       await addDoc(collection(db, "atendimentos"), {
-        ...form,
+        cliente: form.cliente.toLowerCase(),
+        marca: form.marca,
+        modelo: form.modelo,
+        serial: form.serial.trim().toLowerCase(),
+        defeito: form.defeito.toLowerCase(),
         os: numeroOS,
         status: 'Em Análise',
         pecas_utilizadas: [], 
         data_entrada: serverTimestamp()
       });
+
       setForm({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
+      setHistoricoEquipamento([]);
       toast.success(`OS ${numeroOS} registrada!`, { id: loading });
     } catch (error) { 
       toast.error("Erro no sistema.", { id: loading }); 
@@ -89,7 +139,6 @@ export default function Manutencao() {
         </div>
         
         <form onSubmit={handleEntrada} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* CLIENTE */}
           <input 
             placeholder="Cliente / Unidade" 
             className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
@@ -97,7 +146,6 @@ export default function Manutencao() {
             onChange={(e) => setForm({...form, cliente: e.target.value})} 
           />
           
-          {/* SELETOR DE MARCA */}
           <select
             value={form.marca}
             onChange={(e) => setForm({ ...form, marca: e.target.value, modelo: '' })}
@@ -109,7 +157,6 @@ export default function Manutencao() {
             ))}
           </select>
 
-          {/* SELETOR DE MODELO DINÂMICO */}
           <select
             value={form.modelo}
             disabled={!form.marca}
@@ -124,23 +171,39 @@ export default function Manutencao() {
             ))}
           </select>
 
-          {/* NÚMERO DE SÉRIE */}
-          <input 
-            placeholder="S/N (Número de Série)" 
-            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
-            value={form.serial} 
-            onChange={(e) => setForm({...form, serial: e.target.value})} 
-          />
+          {/* NÚMERO DE SÉRIE COM ALERTA DE HISTÓRICO COPLANAR */}
+          <div className="flex flex-col space-y-1">
+            <input 
+              placeholder="S/N (Número de Série)" 
+              className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
+              value={form.serial} 
+              onChange={(e) => setForm({...form, serial: e.target.value})} 
+            />
+            {historicoEquipamento.length > 0 && (
+              <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl p-2 px-3 animate-fade-in">
+                <div className="flex items-center gap-1.5 text-amber-800 text-[11px] font-bold">
+                  <AlertCircle size={14} className="text-amber-600 flex-shrink-0" />
+                  <span>Este equipamento já possui {historicoEquipamento.length} histórico(s)!</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalHistoricoAberto(true)}
+                  className="flex items-center gap-1 text-[10px] font-black uppercase text-white bg-amber-600 hover:bg-amber-700 px-2 py-1 rounded-md transition-all ml-2"
+                >
+                  <History size={12} /> Ver Histórico
+                </button>
+              </div>
+            )}
+          </div>
           
-          {/* DEFEITO RELATADO + BOTÃO */}
-          <div className="md:col-span-2 flex gap-2">
+          <div className="md:col-span-2 flex gap-2 items-start">
             <input 
               placeholder="Defeito Relatado" 
               className="flex-1 p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
               value={form.defeito} 
               onChange={(e) => setForm({...form, defeito: e.target.value})} 
             />
-            <button className="bg-blue-600 text-white px-8 font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-sm whitespace-nowrap">
+            <button className="bg-blue-600 text-white px-8 h-[46px] font-bold rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-sm whitespace-nowrap">
               Dar Entrada
             </button>
           </div>
@@ -173,7 +236,7 @@ export default function Manutencao() {
                 </div>
 
                 <div className="space-y-0.5">
-                  <p className="text-sm text-slate-800 font-bold">Cliente: {item.cliente}</p>
+                  <p className="text-sm text-slate-800 font-bold capitalize">Cliente: {item.cliente}</p>
                   <p className="text-[11px] font-mono text-slate-500 font-bold uppercase">S/N: {item.serial}</p>
                 </div>
                 
@@ -217,6 +280,68 @@ export default function Manutencao() {
           )}
         </div>
       </div>
+
+      {/* MODAL DO HISTÓRICO DE MANUTENÇÃO ANTERIOR */}
+      {modalHistoricoAberto && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100 animate-scale-in">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-2xl">
+              <div className="flex items-center gap-2 text-slate-800">
+                <History className="text-amber-500" size={20} />
+                <div>
+                  <h3 className="font-bold text-base">Histórico do Equipamento</h3>
+                  <p className="text-xs text-slate-500 font-mono">S/N: {form.serial.toUpperCase()}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setModalHistoricoAberto(false)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-200/60 transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {historicoEquipamento.map((hist, index) => (
+                <div key={hist.id} className="border border-slate-200 p-4 rounded-xl space-y-2.5 bg-white relative">
+                  <div className="absolute right-4 top-4 text-[10px] font-black bg-slate-100 text-slate-600 border px-2 py-0.5 rounded-md">
+                    #{index + 1}
+                  </div>
+                  <div className="flex flex-wrap gap-2 items-center text-xs">
+                    <span className="bg-blue-50 text-blue-700 font-black px-2 py-0.5 rounded text-[10px]">
+                      OS: {hist.os}
+                    </span>
+                    <span className="font-bold text-slate-500">
+                      Entrada: {hist.data_entrada?.toDate().toLocaleDateString('pt-BR')} às {hist.data_entrada?.toDate().toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
+                    </span>
+                    <span className={`px-2 py-0.5 text-[9px] font-black rounded uppercase border ${
+                      hist.status === 'Finalizado' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-50 border-slate-200'
+                    }`}>
+                      {hist.status}
+                    </span>
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-700 uppercase">Cliente na época: <span className="text-slate-900 font-medium capitalize">{hist.cliente}</span></h4>
+                    <p className="text-xs font-bold text-slate-700 mt-1 uppercase">Defeito: <span className="text-slate-500 font-medium normal-case block bg-slate-50 p-2 rounded border mt-0.5">{hist.defeito}</span></p>
+                  </div>
+                  {hist.pecas_utilizadas?.length > 0 && (
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Peças Aplicadas:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {hist.pecas_utilizadas.map((p, i) => (
+                          <span key={i} className="text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded">
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalAberto && (
         <ModalGerenciarOS chamado={chamadoSelecionado} onClose={() => setModalAberto(false)} />

@@ -6,9 +6,10 @@ import toast from 'react-hot-toast';
 
 export default function Financas() {
   const agora = new Date();
+  const [tipoFiltro, setTipoFiltro] = useState('mensal'); // 'mensal' ou 'anual'
   const [mesSelecionado, setMesSelecionado] = useState(agora.getMonth()); // 0 = Jan, 11 = Dez
   const [anoSelecionado, setAnoSelecionado] = useState(agora.getFullYear());
-  const [abaAtiva, setAbaAtiva] = useState('faturadas'); // 'faturadas' ou 'pendentes'
+  const [abaAtiva, setAbaAtiva] = useState('faturadas'); // 'faturadas', 'pendentes' ou 'despesas'
   
   // Estado para o formulário de novas despesas
   const [novaDespesa, setNovaDespesa] = useState({ descricao: '', valor: '', categoria: 'Operacional' });
@@ -56,7 +57,12 @@ export default function Financas() {
           const m = dataReferencia.getMonth();
           const a = dataReferencia.getFullYear();
 
-          if (m === Number(mesSelecionado) && a === Number(anoSelecionado)) {
+          // Condição de filtro: Se for anual, valida apenas o ano. Se for mensal, valida mês e ano.
+          const atendeFiltro = tipoFiltro === 'anual' 
+            ? a === Number(anoSelecionado)
+            : m === Number(mesSelecionado) && a === Number(anoSelecionado);
+
+          if (atendeFiltro) {
             const notaTratada = {
               ...dados,
               data_formatada: dataReferencia.toLocaleDateString('pt-BR')
@@ -86,7 +92,11 @@ export default function Financas() {
           const m = dataDespesa.getMonth();
           const a = dataDespesa.getFullYear();
 
-          if (m === Number(mesSelecionado) && a === Number(anoSelecionado)) {
+          const atendeFiltro = tipoFiltro === 'anual'
+            ? a === Number(anoSelecionado)
+            : m === Number(mesSelecionado) && a === Number(anoSelecionado);
+
+          if (atendeFiltro) {
             somaDespesas += dados.valor || 0;
             despesasFiltradas.push({
               ...dados,
@@ -134,7 +144,7 @@ export default function Financas() {
       unsubNotas();
       unsubDespesas();
     };
-  }, [mesSelecionado, anoSelecionado]);
+  }, [mesSelecionado, anoSelecionado, tipoFiltro]);
 
   // Função para salvar despesa no Firebase
   const cadastrarDespesa = async (e) => {
@@ -146,7 +156,8 @@ export default function Financas() {
 
     try {
       await addDoc(collection(db, "despesas_empresa"), {
-        descricao: novaDespesa.descricao,
+        // Forçando o salvamento em letras minúsculas para manter a padronização de busca
+        descricao: novaDespesa.descricao.toLowerCase(),
         valor: Number(novaDespesa.valor),
         categoria: novaDespesa.categoria,
         data_gasto: new Date()
@@ -274,16 +285,41 @@ export default function Financas() {
           <p className="text-slate-500 font-medium">Controle o fluxo de caixa de notas liquidadas e gerencie cobranças pendentes.</p>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 w-full md:w-auto">
+        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+          {/* Alternador Mensal / Anual */}
+          <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 w-full sm:w-auto">
+            <button
+              onClick={() => setTipoFiltro('mensal')}
+              className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+                tipoFiltro === 'mensal' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Mês
+            </button>
+            <button
+              onClick={() => setTipoFiltro('anual')}
+              className={`px-4 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
+                tipoFiltro === 'anual' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              Ano
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 w-full sm:w-auto">
             <select 
               value={mesSelecionado} 
               onChange={(e) => setMesSelecionado(Number(e.target.value))}
-              className="bg-transparent font-bold text-xs text-slate-700 px-3 py-1.5 focus:outline-none cursor-pointer"
+              disabled={tipoFiltro === 'anual'}
+              className="bg-transparent font-bold text-xs text-slate-700 px-3 py-1.5 focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {meses.map((m, index) => (
-                <option key={index} value={index}>{m}</option>
-              ))}
+              {tipoFiltro === 'anual' ? (
+                <option value="">Ano Completo</option>
+              ) : (
+                meses.map((m, index) => (
+                  <option key={index} value={index}>{m}</option>
+                ))
+              )}
             </select>
 
             <select 
@@ -299,7 +335,7 @@ export default function Financas() {
         </div>
       </header>
 
-      {/* METRICAS DO PERÍODO FILTRADO (4 Cards para Fluxo de Caixa Completo) */}
+      {/* METRICAS DO PERÍODO FILTRADO */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
@@ -451,11 +487,13 @@ export default function Financas() {
                 Saídas / Gastos ({dadosFiltrados.listaDespesas.length})
               </button>
             </div>
-            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">Mês de {meses[mesSelecionado]}</span>
+            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+              {tipoFiltro === 'anual' ? `Ano de ${anoSelecionado}` : `${meses[mesSelecionado]} de ${anoSelecionado}`}
+            </span>
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[500px] pr-2">
-            {/* RENDERIZAÇÃO DE NOTAS DE SERVIÇOS (ABAS FATURADAS OU PENDENTES) */}
+            {/* RENDERIZAÇÃO DE NOTAS DE SERVIÇOS */}
             {abaAtiva !== 'despesas' && listaExibida.map((nota) => (
               <div key={nota.id} className="p-4 border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all rounded-2xl flex justify-between items-center gap-4">
                 <div className="space-y-1">
@@ -485,7 +523,7 @@ export default function Financas() {
                     </button>
                   )}
                   <button
-                    onClick={() => executarReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
+                    onClick={() => executingReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 transition-all"
                   >
                     <Printer size={14} />
@@ -494,7 +532,7 @@ export default function Financas() {
               </div>
             ))}
 
-            {/* RENDERIZAÇÃO DA NOVA ABA EXCLUSIVA DE GASTOS / SAÍDAS */}
+            {/* RENDERIZAÇÃO DA ABA DE GASTOS */}
             {abaAtiva === 'despesas' && dadosFiltrados.listaDespesas.map((desp) => (
               <div key={desp.id} className="p-4 border border-slate-100 bg-rose-50/20 hover:bg-rose-50/40 transition-all rounded-2xl flex justify-between items-center">
                 <div className="space-y-1">
