@@ -128,7 +128,16 @@ export default function NotasServico() {
     );
   };
 
-  // 🌟 Executa a impressão otimizada de acordo com o status atual do lote
+  // 🌟 NOVO: Lógica para selecionar ou desmarcar todas as OS visíveis de uma vez
+  const toggleSelecionarTodos = () => {
+    if (selecionadas.length === finalizadas.length) {
+      setSelecionadas([]);
+    } else {
+      setSelecionadas(finalizadas.map(item => item.id));
+    }
+  };
+
+  // Executa a impressão otimizada de acordo com o status atual do lote
   const executarImpressaoHTML = (itens, total, dataNota, statusNota) => {
     const win = window.open('', 'PRINT', 'height=750,width=900,top=100,left=100,toolbar=no,navigator=no,status=no');
     if (!win) {
@@ -263,8 +272,8 @@ export default function NotasServico() {
 
             <div class="terms-section">
               <strong>Observações Importantes:</strong><br/>
-              1. Os serviços listados acima possuem garantia legal de 90 dias a contar da data de emissão deste documento.<br/>
-              2. Esta Nota de Serviço discrimina custos internos de manutenção e insumos aplicados conforme contrato estabelecido.
+              <strong>Garantia:</strong> Os serviços listados acima possuem garantia legal de 90 dias a contar da data de emissão deste documento.<br/>
+              <strong>Contrato:</strong> Esta Nota de Serviço discrimina custos internos de manutenção e insumos aplicados conforme contrato estabelecido.
             </div>
 
             <div class="footer-signature">
@@ -287,22 +296,20 @@ export default function NotasServico() {
     win.print();
   };
 
-  // 🌟 MODIFICADO: Apenas salva a nota no banco com status inicial "gerado"
   const gerarNotaEGuardarNoHistorico = async () => {
     const itens = finalizadas.filter(f => selecionadas.includes(f.id));
     if (itens.length === 0) return toast.error("Selecione ao menos um serviço!");
 
-    const loading = toast.loading("Salvando nota e atualizando atendimentos...");
+    const loading = toast.loading("Salvando nota e updating atendimentos...");
     const total = itens.length * 70;
     const dataAtualString = new Date().toLocaleDateString('pt-BR');
 
     try {
       const batch = writeBatch(db);
 
-      // 1. Cria a referência da nova nota com status 'gerado' (Falta pagar)
       const novaNotaRef = doc(collection(db, "historico_notas"));
       batch.set(novaNotaRef, {
-        status: "gerado", // 🌟 Status inicial controlado
+        status: "gerado", 
         data_fechamento: serverTimestamp(),
         data_extenso: dataAtualString,
         valor_total: total,
@@ -316,7 +323,6 @@ export default function NotasServico() {
         }))
       });
 
-      // 2. Muda o status dos atendimentos para "Faturado" para sumirem da aba pendente
       itens.forEach(item => {
         const atendimentoRef = doc(db, "atendimentos", item.id);
         batch.update(atendimentoRef, { status: "Faturado" });
@@ -333,7 +339,6 @@ export default function NotasServico() {
     }
   };
 
-  // 🌟 NOVO: Função para dar baixa na nota assim que o cliente realizar o pagamento
   const confirmarPagamentoNota = async (id) => {
     const confirmacao = window.confirm("Deseja confirmar o pagamento desta nota? Ela será arquivada e computada nas Finanças.");
     if (!confirmacao) return;
@@ -342,7 +347,7 @@ export default function NotasServico() {
       const notaRef = doc(db, "historico_notas", id);
       await updateDoc(notaRef, {
         status: 'faturado',
-        data_faturamento: serverTimestamp() // Importante para o painel financeiro sincronizar
+        data_faturamento: serverTimestamp() 
       });
       toast.success("Pagamento baixado com sucesso! Nota enviada ao histórico de pagas.");
       carregarPrimeiraPaginaHistorico();
@@ -398,7 +403,15 @@ export default function NotasServico() {
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
               <tr>
-                <th className="p-5 w-10 text-center">Sel.</th>
+                {/* 🌟 MODIFICADO: Substituído o "Sel." estático pela caixa de seleção mestre */}
+                <th className="p-5 w-10 text-center">
+                  <div 
+                    onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
+                    className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${finalizadas.length > 0 && selecionadas.length === finalizadas.length ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
+                  >
+                    {finalizadas.length > 0 && selecionadas.length === finalizadas.length && <CheckCircle2 size={16} className="text-white" />}
+                  </div>
+                </th>
                 <th className="p-5">Equipamento / Origem</th>
                 <th className="p-5">Peças / Serviços</th>
                 <th className="p-5 text-right">Valor</th>
@@ -417,7 +430,7 @@ export default function NotasServico() {
                     </div>
                   </td>
                   <td className="p-5">
-                    <p className="font-bold text-slate-800">{item.marca} ${item.modelo}</p>
+                    <p className="font-bold text-slate-800">{item.marca} {item.modelo}</p>
                     <p className="text-xs text-slate-400">S/N: {item.serial} | <span className="text-blue-600 font-bold">{item.cliente}</span></p>
                   </td>
                   <td className="p-5">
@@ -446,38 +459,26 @@ export default function NotasServico() {
       {abaAtiva === 'historico' && (
         <div className="space-y-4">
           
-          {/* Subtelas de Filtros Internos da Aba */}
           <div className="flex gap-2 bg-slate-100 p-1.5 rounded-2xl w-fit">
             <button
               onClick={() => setStatusFiltroHistorico('gerado')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-                statusFiltroHistorico === 'gerado' 
-                  ? 'bg-white text-amber-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'gerado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               <FileText size={14} /> Notas a Faturar
             </button>
             <button
               onClick={() => setStatusFiltroHistorico('faturado')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${
-                statusFiltroHistorico === 'faturado' 
-                  ? 'bg-white text-emerald-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
+              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'faturado' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               <CheckCircle2 size={14} /> Histórico de Notas Pagas
             </button>
           </div>
 
-          {/* Renderização das Notas Guardadas */}
           {historico.map((nota) => (
             <div key={nota.id} className="bg-white p-5 rounded-2xl border border-slate-200 flex justify-between items-center hover:shadow-sm transition-all">
               <div className="space-y-2 flex-1">
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-md text-white uppercase ${
-                    nota.status === 'faturado' ? 'bg-emerald-600' : 'bg-amber-500'
-                  }`}>
+                  <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-md text-white uppercase ${nota.status === 'faturado' ? 'bg-emerald-600' : 'bg-amber-500'}`}>
                     <Calendar size={12} /> {nota.status === 'faturado' ? 'Liquidada' : 'Aguardando Pagamento'} ({nota.data_extenso})
                   </span>
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
@@ -505,7 +506,6 @@ export default function NotasServico() {
                 <p className="text-xl font-black text-slate-800">R$ {nota.valor_total?.toFixed(2)}</p>
                 
                 <div className="flex gap-2">
-                  {/* Botão de Dar Baixa Dinâmico (Surgirá apenas se a nota ainda não foi marcada como paga) */}
                   {nota.status !== 'faturado' && (
                     <button 
                       onClick={() => confirmarPagamentoNota(nota.id)}
@@ -516,9 +516,8 @@ export default function NotasServico() {
                     </button>
                   )}
                   
-                  {/* Botão de Impressão Direta da Via Adaptada */}
                   <button 
-                    onClick={() => executarImpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso, nota.status)}
+                    onClick={() => ejecutarImpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso, nota.status)}
                     className="flex items-center gap-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-600 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all uppercase tracking-wide"
                   >
                     <Printer size={13} /> Imprimir Via
@@ -557,9 +556,7 @@ export default function NotasServico() {
             <div className="p-20 text-center bg-white rounded-3xl border border-slate-200">
               <History size={48} className="mx-auto text-slate-200 mb-2" />
               <p className="text-slate-400 font-medium">
-                {statusFiltroHistorico === 'gerado' 
-                  ? 'Nenhuma nota aguardando faturamento no momento.' 
-                  : 'Nenhuma nota liquidada encontrada no histórico.'}
+                {statusFiltroHistorico === 'gerado' ? 'Nenhuma nota aguardando faturamento no momento.' : 'Nenhuma nota liquidada encontrada no histórico.'}
               </p>
             </div>
           )}

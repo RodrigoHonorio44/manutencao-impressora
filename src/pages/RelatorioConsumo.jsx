@@ -14,9 +14,9 @@ export default function RelatorioConsumo() {
   // Estado isolado para acumular o resumo fiel do lote vindo do banco
   const [resumoPecasGastas, setResumoPecasGastas] = useState({});
 
-  // Estados de Paginação
+  // Estados de Paginação Corrigidos
   const [ultimoDocumento, setUltimoDocumento] = useState(null);
-  const [historicoPaginas, setHistoricoPaginas] = useState([]);
+  const [historicoPaginas, setHistoricoPaginas] = useState([]); // Guardará o primeiro documento de cada página
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [temMais, setTemMais] = useState(false);
   
@@ -30,17 +30,22 @@ export default function RelatorioConsumo() {
       let q = collection(db, "atendimentos");
       let filtros = [orderBy("data_finalizacao", "desc"), limit(ITENS_POR_PAGINA)];
 
+      // Lógica de Paginação Consertada
       if (proximaPagina && ultimoDocumento) {
         filtros.push(startAfter(ultimoDocumento));
-      } else if (retrocederPagina && historicoPaginas[paginaAtual - 2]) {
-        filtros.push(startAfter(historicoPaginas[paginaAtual - 3] || null));
+      } else if (retrocederPagina && paginaAtual > 1) {
+        // Para voltar à página anterior, usamos o index da página desejada no histórico (paginaAtual - 2)
+        const docAnterior = historicoPaginas[paginaAtual - 2];
+        if (docAnterior) {
+          filtros.push(startAfter(docAnterior));
+        }
       }
 
       const queryFinal = query(q, ...filtros);
       const snapshot = await getDocs(queryFinal);
 
       if (snapshot.empty) {
-        if (!proximaPagina) {
+        if (!proximaPagina && !retrocederPagina) {
           setAtendimentos([]);
           setResumoPecasGastas({});
           setUltimoDocumento(null);
@@ -58,36 +63,8 @@ export default function RelatorioConsumo() {
       }));
 
       // =========================================================================
-      // PASSO CRUCIAL: Contagem direta e normalizada de TUDO que veio do banco
+      // 1. PRIMEIRO: Filtragem em memória para exibição exata da página atual
       // =========================================================================
-      const acumuladorPecas = {};
-      dadosBrutos.forEach(atendimento => {
-        if (Array.isArray(atendimento.pecas_utilizadas)) {
-          atendimento.pecas_utilizadas.forEach(pecaCrua => {
-            if (!pecaCrua) return;
-
-            // Limpa espaços extras e padroniza para letras maiúsculas sem acentos comuns
-            const pecaTexto = pecaCrua.trim().toUpperCase()
-              .normalize("NFD")
-              .replace(/[\u0300-\u036f]/g, ""); 
-
-            let nomePadronizado = pecaCrua.trim();
-
-            // Identificação robusta por palavras-chave (Varre também os novos nomes longos/part numbers)
-            if (pecaTexto.includes("PELICULA")) {
-              nomePadronizado = "PELÍCULA DE FUSÃO (TN3472)";
-            } else if (pecaTexto.includes("ROLO") || pecaTexto.includes("PRESSOR")) {
-              nomePadronizado = "ROLO PRESSOR (TN3472)";
-            }
-
-            acumuladorPecas[nomePadronizado] = (acumuladorPecas[nomePadronizado] || 0) + 1;
-          });
-        }
-      });
-      setResumoPecasGastas(acumuladorPecas);
-      // =========================================================================
-
-      // Filtragem em memória apenas para a exibição visual da tabela de registros
       const dadosFiltrados = dadosBrutos.filter(atendimento => {
         const possuiPecas = Array.isArray(atendimento.pecas_utilizadas) && atendimento.pecas_utilizadas.length > 0;
         if (!possuiPecas) return false;
@@ -112,16 +89,63 @@ export default function RelatorioConsumo() {
         return true;
       });
 
+      // =========================================================================
+      // 2. SEGUNDO: Contagem baseada RIGOROSAMENTE nos dados filtrados da página
+      // =========================================================================
+      const acumuladorPecas = {};
+      dadosFiltrados.forEach(atendimento => {
+        if (Array.isArray(atendimento.pecas_utilizadas)) {
+          // Captura o modelo e limpa possíveis caracteres estranhos (como o '$') vindo do banco
+          const modeloEquipamento = (atendimento.modelo || atendimento.modelo_impressora || atendimento.equipamento || '')
+            .toUpperCase()
+            .replace(/[^A-Z0-9 ]/g, ''); // Remove cifrões e caracteres especiais
+
+          let sufixoMarca = "OUTROS";
+          if (modeloEquipamento.includes("BROTHER") || modeloEquipamento.includes("DCP") || modeloEquipamento.includes("HL")) {
+            sufixoMarca = "BROTHER";
+          } else if (modeloEquipamento.includes("HP") || modeloEquipamento.includes("LASER") || modeloEquipamento.includes("MFP")) {
+            sufixoMarca = "HP";
+          } else if (modeloEquipamento.includes("SAMSUNG")) {
+            sufixoMarca = "SAMSUNG";
+          }
+
+          atendimento.pecas_utilizadas.forEach(pecaCrua => {
+            if (!pecaCrua) return;
+
+            const pecaTexto = pecaCrua.trim().toUpperCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, ""); 
+
+            let nomePadronizado = pecaCrua.trim();
+
+            // Separação inteligente por contexto de marca sem concatenar sufixos indesejados
+            if (pecaTexto.includes("PELICULA")) {
+              nomePadronizado = `PELÍCULA DE FUSÃO ${sufixoMarca}`;
+            } else if (pecaTexto.includes("ROLO") || pecaTexto.includes("PRESSOR")) {
+              nomePadronizado = `ROLO PRESSOR ${sufixoMarca}`;
+            } else {
+              nomePadronizado = pecaCrua.trim().toUpperCase();
+            }
+
+            acumuladorPecas[nomePadronizado] = (acumuladorPecas[nomePadronizado] || 0) + 1;
+          });
+        }
+      });
+      setResumoPecasGastas(acumuladorPecas);
+      // =========================================================================
+
+      // Atualização dos ponteiros de paginação
       const ultimoDocAtual = snapshot.docs[snapshot.docs.length - 1];
       setUltimoDocumento(ultimoDocAtual);
 
       if (proximaPagina) {
-        setHistoricoPaginas([...historicoPaginas, ultimoDocAtual]);
+        setHistoricoPaginas(prev => [...prev, ultimoDocumento]);
         setPaginaAtual(prev => prev + 1);
       } else if (retrocederPagina) {
+        setHistoricoPaginas(prev => prev.slice(0, -1));
         setPaginaAtual(prev => prev - 1);
       } else {
-        setHistoricoPaginas([ultimoDocAtual]);
+        setHistoricoPaginas([]);
         setPaginaAtual(1);
       }
 
@@ -143,17 +167,15 @@ export default function RelatorioConsumo() {
     return new Date(campoData).toLocaleDateString('pt-BR');
   };
 
-  // Encontra o maior valor do lote para calcular a proporção (100%) das barras do gráfico
   const valoresValidos = Object.values(resumoPecasGastas);
   const valorMaximo = valoresValidos.length > 0 ? Math.max(...valoresValidos) : 1;
 
   return (
     <div className="p-8 space-y-8 bg-slate-50 min-h-screen print:bg-white print:p-0 print:space-y-0 print:m-0 id-container-relatorio-impressao">
       
-      {/* CSS OTIMIZADO PARA IMPRESSÃO - FORÇANDO SUMIÇO DA SIDEBAR GLOBAL */}
+      {/* CSS OTIMIZADO PARA IMPRESSÃO */}
       <style>{`
         @media print {
-          /* 1. Remove qualquer barra lateral ou menu global de forma absoluta */
           nav, aside, header, button, .no-print, [role="navigation"], 
           .sidebar, [class*="sidebar"], [class*="Sidebar"] {
             display: none !important;
@@ -164,7 +186,6 @@ export default function RelatorioConsumo() {
             visibility: hidden !important;
           }
           
-          /* 2. Reseta espaçamentos estruturais de possíveis layouts pais (como flex/grid laterais) */
           html, body, #root, .min-h-screen, main, div {
             background-color: #fff !important;
             color: #000 !important;
@@ -179,7 +200,6 @@ export default function RelatorioConsumo() {
             max-width: 100% !important;
           }
 
-          /* 3. Força o container do relatório a ocupar o topo esquerdo absoluto da folha */
           .id-container-relatorio-impressao {
             display: block !important;
             position: absolute !important;
@@ -309,15 +329,14 @@ export default function RelatorioConsumo() {
             </div>
           </div>
 
-          {/* SEÇÃO DO GRÁFICO DE BARRAS TAIWIND (Largura Total) */}
+          {/* SEÇÃO DO GRÁFICO DE BARRAS SEPARADO POR MARCA */}
           <div className="w-full bg-white p-5 rounded-2xl border border-slate-200 shadow-sm print:border-slate-300 print:p-4 print:rounded-xl break-inside-avoid">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 flex items-center gap-1.5 border-b pb-1">
               <BarChart3 size={16} className="text-blue-600" /> 
-              Análise Visual de Consumo
+              Análise Visual de Consumo (Por Página)
             </h3>
             <div className="space-y-3.5">
               {Object.entries(resumoPecasGastas).map(([nomePeca, qtd]) => {
-                // Define tamanho mínimo de 8% para a barra não sumir visualmente se for 1 unidade
                 const percentual = Math.max(8, (qtd / valorMaximo) * 100);
                 const isPelicula = nomePeca.includes("PELÍCULA");
 
@@ -327,9 +346,7 @@ export default function RelatorioConsumo() {
                       <span className="truncate max-w-[85%]">{nomePeca}</span>
                       <span className="font-mono text-slate-900 font-black">{qtd} un</span>
                     </div>
-                    {/* Trilha da Barra */}
                     <div className="w-full h-3.5 bg-slate-100 rounded-md overflow-hidden relative border border-slate-200/50">
-                      {/* Barra Dinâmica Colorida */}
                       <div 
                         className={`h-full rounded-r transition-all duration-500 ${isPelicula ? 'bg-gradient-to-r from-blue-500 to-blue-600' : 'bg-gradient-to-r from-emerald-500 to-emerald-600'}`}
                         style={{ width: `${percentual}%` }}
