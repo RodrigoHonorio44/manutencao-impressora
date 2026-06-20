@@ -63,19 +63,15 @@ export default function Estoque() {
   const [quantidade, setQuantidade] = useState('');
   const [termoBusca, setTermoBusca] = useState('');
   
-  // Estados de controle do Modal e histórico cruzado
   const [itemSelecionadoRastrear, setItemSelecionadoRastrear] = useState(null);
   const [historicoAtendimentos, setHistoricoAtendimentos] = useState([]);
   const [carregandoAtendimentos, setCarregandoAtendimentos] = useState(false);
 
-  // 1. Escuta as coleções do Firestore e unifica as peças zeradas dinamicamente
   useEffect(() => {
     if (verFiltroStatus === 'disponivel') {
       const q = query(collection(db, "estoque_pecas"));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // Mantém apenas itens ativos (Qtd > 0)
         const ativos = data.filter(item => (Number(item.qtd) || 0) > 0);
 
         ativos.sort((a, b) => {
@@ -91,16 +87,12 @@ export default function Estoque() {
       });
       return () => unsubscribe();
     } 
-    
-    // Se estiver na aba "esgotado" (Arquivo Zeradas)
     else {
       let dadosEstoqueZerado = [];
       let dadosHistoricoZerado = [];
 
       const unificarEZerar = () => {
         const unificados = [...dadosEstoqueZerado, ...dadosHistoricoZerado];
-        
-        // Remove duplicidades cruzadas por ID
         const IDsUnicos = Array.from(new Set(unificados.map(a => a.id)))
           .map(id => unificados.find(a => a.id === id));
 
@@ -117,7 +109,6 @@ export default function Estoque() {
         setPecas(IDsUnicos);
       };
 
-      // Escuta peças que zeraram na tabela principal
       const qEstoque = query(collection(db, "estoque_pecas"));
       const unsubscribeEstoque = onSnapshot(qEstoque, (snapshot) => {
         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -125,7 +116,6 @@ export default function Estoque() {
         unificarEZerar();
       });
 
-      // Escuta o banco legado histórico de itens finalizados
       const qHistorico = query(collection(db, "historico_lotes_zerados"));
       const unsubscribeHistorico = onSnapshot(qHistorico, (snapshot) => {
         dadosHistoricoZerado = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -139,7 +129,6 @@ export default function Estoque() {
     }
   }, [verFiltroStatus]);
 
-  // 2. Busca e Varredura Avançada tratando 'pecas_utilizadas' como Array
   useEffect(() => {
     if (!itemSelecionadoRastrear) {
       setHistoricoAtendimentos([]);
@@ -147,7 +136,6 @@ export default function Estoque() {
     }
 
     setCarregandoAtendimentos(true);
-
     const qAtendimentos = query(collection(db, "atendimentos"));
 
     const unsubscribe = onSnapshot(qAtendimentos, (snapshot) => {
@@ -157,7 +145,6 @@ export default function Estoque() {
       }));
 
       const textoPecaCompleto = (itemSelecionadoRastrear.nome || '').toLowerCase();
-
       let partNumberIsolado = "";
       const matchPN = textoPecaCompleto.match(/part number:\s*([a-zA-Z0-9_-]+)/);
       if (matchPN && matchPN[1]) {
@@ -235,10 +222,11 @@ export default function Estoque() {
     const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} - (Part Number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
 
     try {
+      // NORMALIZAÇÃO PARA MINÚSCULAS: Salvando dados estruturados de forma limpa e padronizada
       await addDoc(collection(db, "estoque_pecas"), {
-        marca: marcaSelecionada,
-        modelo: modeloSelecionada,
-        nome: nomeCompletoPeca,
+        marca: marcaSelecionada.trim().toLowerCase(),
+        modelo: modeloSelecionada.trim().toLowerCase(),
+        nome: nomeCompletoPeca.trim().toLowerCase(),
         qtd: Number(quantidade),
         data_entrada: serverTimestamp()
       });
@@ -276,23 +264,23 @@ export default function Estoque() {
   });
 
   return (
-    <div className="p-8 space-y-8 bg-slate-50 min-h-screen relative">
+    <div className="p-4 md:p-8 space-y-6 md:space-y-8 bg-slate-50 min-h-screen relative">
       <header>
-        <h1 className="text-2xl font-bold text-slate-800">Estoque de Peças</h1>
-        <p className="text-slate-500 font-medium">Controle inteligente e padronizado de insumos de assistência.</p>
+        <h1 className="text-xl md:text-2xl font-bold text-slate-800">Estoque de Peças</h1>
+        <p className="text-xs md:text-sm text-slate-500 font-medium">Controle inteligente e padronizado de insumos de assistência.</p>
       </header>
 
-      {/* Formulário Automatizado */}
-      <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
-        <div className="flex items-center gap-2 mb-2 text-blue-600">
-          <PackagePlus size={24} />
-          <h2 className="font-bold text-slate-800 text-lg">Nova Entrada Automatizada</h2>
+      {/* Formulário Automatizado - Mobile Friendly */}
+      <section className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex items-center gap-2 mb-1 text-blue-600">
+          <PackagePlus size={22} />
+          <h2 className="font-bold text-slate-800 text-base md:text-lg">Nova Entrada Automatizada</h2>
         </div>
 
         <form onSubmit={handleAdicionar} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Marca</label>
-            <select value={marcaSelecionada} onChange={handleMarcaChange} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700">
+            <select value={marcaSelecionada} onChange={handleMarcaChange} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Selecione...</option>
               {Object.keys(CATALOGO_IMPRESSORAS).map(marca => <option key={marca} value={marca}>{marca}</option>)}
             </select>
@@ -300,7 +288,7 @@ export default function Estoque() {
 
           <div className="flex flex-col space-y-1.5">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Modelo</label>
-            <select value={modeloSelecionada} onChange={(e) => setModeloSelecionada(e.target.value)} disabled={!marcaSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50">
+            <select value={modeloSelecionada} onChange={(e) => setModeloSelecionada(e.target.value)} disabled={!marcaSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50 outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Selecione...</option>
               {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].modelos.map(mod => <option key={mod} value={mod}>{mod}</option>)}
             </select>
@@ -308,63 +296,64 @@ export default function Estoque() {
 
           <div className="flex flex-col space-y-1.5 md:col-span-2">
             <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno</label>
-            <select value={pecaObjetoSelecionado ? JSON.stringify(pecaObjetoSelecionado) : ''} onChange={(e) => setPecaObjetoSelecionado(e.target.value ? JSON.parse(e.target.value) : null)} disabled={!modeloSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50">
+            <select value={pecaObjetoSelecionado ? JSON.stringify(pecaObjetoSelecionado) : ''} onChange={(e) => setPecaObjetoSelecionado(e.target.value ? JSON.parse(e.target.value) : null)} disabled={!modeloSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50 outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Selecione a peça...</option>
               {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].pecas.map((p, index) => <option key={index} value={JSON.stringify(p)}>{p.nome} (PN: {p.pn})</option>)}
             </select>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 md:col-span-1">
+          {/* Grid de quantidade e botão responsivo */}
+          <div className="grid grid-cols-3 gap-3 md:col-span-1">
             <div className="col-span-1 flex flex-col space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase text-center tracking-wide">Qtd</label>
-              <input type="number" min="1" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" className="w-full p-3 bg-slate-50 border rounded-xl text-center font-bold text-slate-700" />
+              <input type="number" min="1" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" className="w-full p-3 bg-slate-50 border rounded-xl text-center font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <button type="submit" className="col-span-2 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 text-xs uppercase tracking-wider h-[46px]">
+            <button type="submit" className="col-span-2 bg-blue-600 text-white font-bold rounded-xl active:bg-blue-800 md:hover:bg-blue-700 text-xs uppercase tracking-wider h-[48px]">
               Salvar
             </button>
           </div>
         </form>
       </section>
 
-      {/* Menu de Filtro e Barra de Busca */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-300/40">
-          <button onClick={() => setVerFiltroStatus('disponivel')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>
+      {/* Menu de Filtro e Barra de Busca Responsiva */}
+      <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+        <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-300/40 shrink-0">
+          <button onClick={() => setVerFiltroStatus('disponivel')} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>
             <CheckCircle2 size={14} /> Em Estoque
           </button>
-          <button onClick={() => setVerFiltroStatus('esgotado')} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'esgotado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}>
+          <button onClick={() => setVerFiltroStatus('esgotado')} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'esgotado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}>
             <Archive size={14} /> Arquivo (Zeradas)
           </button>
         </div>
 
-        <div className="relative flex items-center bg-white border border-slate-200 rounded-2xl p-2 shadow-sm w-full max-w-md">
-          <Search size={20} className="text-slate-400 ml-2" />
-          <input type="text" placeholder="Buscar por Código (PN), Modelo ou Toner..." value={termoBusca} onChange={(e) => setTermoBusca(e.target.value)} className="w-full p-2 pl-3 text-sm font-medium outline-none text-slate-700 bg-transparent" />
-          {termoBusca && <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 font-bold px-2">Limpar</button>}
+        <div className="relative flex items-center bg-white border border-slate-200 rounded-2xl p-1.5 shadow-sm w-full max-w-md">
+          <Search size={18} className="text-slate-400 ml-2" />
+          <input type="text" placeholder="Buscar por Código (PN), Modelo ou Insumo..." value={termoBusca} onChange={(e) => setTermoBusca(e.target.value)} className="w-full p-2 pl-2 text-sm font-medium outline-none text-slate-700 bg-transparent" />
+          {termoBusca && <button onClick={() => setTermoBusca('')} className="text-xs text-slate-400 font-bold px-2 active:text-slate-600">Limpar</button>}
         </div>
       </div>
 
-      {/* Tabela de Visualização */}
+      {/* Tabela de Visualização com Scroll Horizontal para Mobile */}
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-5 bg-slate-50 border-b flex items-center justify-between">
+        <div className="p-4 md:p-5 bg-slate-50 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Table size={16} className="text-slate-400" />
             <h3 className="font-bold text-slate-700 text-xs uppercase tracking-wider">
               {verFiltroStatus === 'disponivel' ? 'Insumos Disponíveis' : 'Histórico de Peças Esgotadas'}
             </h3>
           </div>
-          <span className="text-xs bg-slate-200 text-slate-600 px-2.5 py-0.5 rounded-full font-bold">
+          <span className="text-[11px] bg-slate-200 text-slate-600 px-2.5 py-0.5 rounded-full font-bold">
             Mostrando {pecasFiltradas.length} itens
           </span>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse min-w-[700px]">
             <thead className="bg-slate-100/70 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b">
               <tr>
                 <th className="p-4 pl-6 w-32">{verFiltroStatus === 'disponivel' ? 'Data' : 'Data Fim'}</th>
                 <th className="p-4 w-48">Marca / Modelo</th>
-                <th className="p-4">Especificação Técnica & Observação Comercial</th>
+                <th className="p-4">Especificação Técnica & Observação</th>
                 <th className="p-4 text-center w-24">Qtd</th>
                 <th className="p-4 text-center w-24">Ações</th>
               </tr>
@@ -380,64 +369,73 @@ export default function Estoque() {
                     <p className="text-[10px] text-slate-400 font-bold uppercase">{item.modelo}</p>
                   </td>
                   <td className="p-4 text-xs text-slate-600 uppercase font-semibold">
-                    <p>{item.nome}</p>
+                    <p className="break-words max-w-md">{item.nome}</p>
                   </td>
                   <td className="p-4 text-center">
                     <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${Number(item.qtd) > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
                       {Number(item.qtd)?.toString().padStart(2, '0') || '00'}
                     </span>
                   </td>
-                  <td className="p-4 text-center flex items-center justify-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setItemSelecionadoRastrear(item)}
-                      className="text-slate-400 hover:text-blue-600 p-2 rounded-xl hover:bg-blue-50 transition-colors"
-                      title="Ver atendimentos que usaram esta peça"
-                    >
-                      <Eye size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleExcluir(item.id, item.nome)}
-                      className="text-slate-400 hover:text-red-600 p-2 rounded-xl hover:bg-red-50 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                  <td className="p-4 text-center">
+                    <div className="flex items-center justify-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setItemSelecionadoRastrear(item)}
+                        className="text-slate-400 active:text-blue-600 md:hover:text-blue-600 p-2 rounded-xl active:bg-blue-50 md:hover:bg-blue-50 transition-colors"
+                        title="Ver atendimentos que usaram esta peça"
+                      >
+                        <Eye size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExcluir(item.id, item.nome)}
+                        className="text-slate-400 active:text-red-600 md:hover:text-red-600 p-2 rounded-xl active:bg-red-50 md:hover:bg-red-50 transition-colors"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
+              {pecasFiltradas.length === 0 && (
+                <tr>
+                  <td colSpan="5" className="text-center p-8 text-slate-400 italic text-sm font-normal">
+                    Nenhuma peça encontrada correspondente aos filtros.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </section>
 
-      {/* MODAL DE RASTREABILIDADE TRATANDO ARRAY DO FIRESTORE */}
+      {/* MODAL DE RASTREABILIDADE TOTALMENTE RESPONSIVO */}
       {itemSelecionadoRastrear && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[110] p-3 md:p-4">
+          <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-150">
             {/* Header Modal */}
-            <div className="p-5 bg-slate-50 border-b flex justify-between items-center">
-              <div>
-                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso Real em Atendimentos</span>
-                <h3 className="text-sm font-bold text-slate-800 mt-1 uppercase max-w-md truncate">{itemSelecionadoRastrear.nome}</h3>
+            <div className="p-4 md:p-5 bg-slate-50 border-b flex justify-between items-center shrink-0">
+              <div className="max-w-[85%]">
+                <span className="text-[9px] md:text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso Real em Atendimentos</span>
+                <h3 className="text-xs md:text-sm font-bold text-slate-800 mt-1 uppercase truncate">{itemSelecionadoRastrear.nome}</h3>
               </div>
               <button onClick={() => setItemSelecionadoRastrear(null)} className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-400 hover:text-slate-600">
                 <X size={18} />
               </button>
             </div>
 
-            {/* Conteúdo Modal */}
-            <div className="p-6 space-y-4">
-              <p className="text-xs text-slate-500 font-medium">Buscando correspondências internas na lista de peças aplicadas dos chamados:</p>
+            {/* Conteúdo Modal com Rolagem Lateral e Vertical Interna */}
+            <div className="p-4 md:p-6 space-y-4 overflow-y-auto flex-1">
+              <p className="text-[11px] md:text-xs text-slate-500 font-medium">Buscando correspondências internas na lista de peças aplicadas dos chamados:</p>
               
               {carregandoAtendimentos ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400 space-y-2">
-                  <Loader2 size={24} className="animate-spin text-blue-600" />
+                  <Loader2 size={22} className="animate-spin text-blue-600" />
                   <span className="text-xs font-semibold">Vasculhando banco de atendimentos...</span>
                 </div>
               ) : (
-                <div className="border rounded-xl overflow-hidden bg-slate-50">
-                  <table className="w-full text-left text-xs border-collapse">
+                <div className="border rounded-xl overflow-x-auto bg-slate-50">
+                  <table className="w-full text-left text-xs border-collapse min-w-[500px]">
                     <thead className="bg-slate-200/60 text-slate-600 uppercase font-bold text-[9px] tracking-wider border-b">
                       <tr>
                         <th className="p-3">Data Finalização</th>
@@ -472,7 +470,7 @@ export default function Estoque() {
                       ) : (
                         <tr>
                           <td colSpan="4" className="text-center py-10 text-slate-400 italic font-normal">
-                            Nenhum registro encontrado. Certifique-se de que a descrição curta da peça foi inclusa na lista do atendimento.
+                            Nenhum registro encontrado para essa especificação.
                           </td>
                         </tr>
                       )}
@@ -483,8 +481,8 @@ export default function Estoque() {
             </div>
 
             {/* Footer Modal */}
-            <div className="p-4 bg-slate-50 border-t flex justify-end">
-              <button onClick={() => setItemSelecionadoRastrear(null)} className="px-4 py-2 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider hover:bg-slate-300 transition-all">
+            <div className="p-4 bg-slate-50 border-t flex justify-end shrink-0">
+              <button onClick={() => setItemSelecionadoRastrear(null)} className="w-full sm:w-auto px-5 py-2.5 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider active:bg-slate-300 transition-all">
                 Fechar Janela
               </button>
             </div>

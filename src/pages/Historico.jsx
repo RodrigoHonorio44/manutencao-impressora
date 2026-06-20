@@ -11,37 +11,24 @@ export default function Historico() {
 
   const buscarHistorico = async (e) => {
     if (e) e.preventDefault();
-    const termoBusca = busca.trim();
+    const termoBusca = busca.trim().toLowerCase(); // Padroniza a busca em minúsculas
     if (!termoBusca) return toast.error("Digite o S/N ou Modelo para buscar!");
 
     setCarregando(true);
     try {
       const atendimentosRef = collection(db, "atendimentos");
-      
-      // 1. TENTA BUSCAR PELO NÚMERO DE SÉRIE ORIGINAL
+      let resultados = [];
+
+      // 1. BUSCA DIRETAMENTE PELO SERIAL EM MINÚSCULAS
       let q = query(atendimentosRef, where("serial", "==", termoBusca));
       let querySnapshot = await getDocs(q);
-      let resultados = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      resultados = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-      // 1b. SE NÃO ACHOU, TENTA EM MAIÚSCULAS
-      if (resultados.length === 0) {
-        q = query(atendimentosRef, where("serial", "==", termoBusca.toUpperCase()));
-        querySnapshot = await getDocs(q);
-        resultados = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      }
-
-      // 2. SE NÃO ACHOU POR S/N, BUSCA PELO MODELO
+      // 2. SE NÃO ACHOU POR S/N, BUSCA DIRETAMENTE PELO MODELO EM MINÚSCULAS
       if (resultados.length === 0) {
         const qModelo = query(atendimentosRef, where("modelo", "==", termoBusca));
         const snapshotModelo = await getDocs(qModelo);
         resultados = snapshotModelo.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // 2b. Tenta modelo em maiúsculas se falhar
-        if (resultados.length === 0) {
-          const qModeloUpper = query(atendimentosRef, where("modelo", "==", termoBusca.toUpperCase()));
-          const snapshotModeloUpper = await getDocs(qModeloUpper);
-          resultados = snapshotModeloUpper.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        }
       }
 
       ordenarERenderizar(resultados);
@@ -65,7 +52,6 @@ export default function Historico() {
     if (lista.length === 0) toast.error("Nenhum registro encontrado.");
   };
 
-  // NOVO: Função para limpar a busca e resetar a tela
   const handleLimparBusca = () => {
     setBusca('');
     setHistorico([]);
@@ -75,10 +61,10 @@ export default function Historico() {
     <div className="p-8 space-y-8 bg-slate-50 min-h-screen">
       <header>
         <h1 className="text-2xl font-bold text-slate-800">Histórico do Equipamento</h1>
-        <p className="text-slate-500">Consulte o passado de manutenções de qualquer impressora pelo S/N.</p>
+        <p className="text-slate-500">Consulte o passado de manutenções de qualquer impressora pelo S/N ou Modelo.</p>
       </header>
 
-      {/* Barra de Busca Alterada */}
+      {/* Barra de Busca */}
       <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm max-w-2xl">
         <form onSubmit={buscarHistorico} className="flex gap-3">
           <div className="flex-1 relative flex items-center bg-slate-50 border rounded-xl focus-within:ring-2 focus-within:ring-blue-500 pr-2">
@@ -90,7 +76,6 @@ export default function Historico() {
               onChange={(e) => setBusca(e.target.value)}
               className="w-full py-3 bg-transparent outline-none text-slate-700 font-medium"
             />
-            {/* BOTÃO DE LIMPAR INTEGRADO AO INPUT */}
             {busca && (
               <button 
                 type="button"
@@ -130,9 +115,13 @@ export default function Historico() {
               </div>
               
               <div className="flex items-center gap-4 text-xs text-slate-400 font-medium">
-                <span className="flex items-center gap-1"><Calendar size={14}/> Entrada: {os.data_entrada?.toDate().toLocaleDateString('pt-BR')}</span>
+                <span className="flex items-center gap-1">
+                  <Calendar size={14}/> Entrada: {os.data_entrada?.toDate ? os.data_entrada.toDate().toLocaleDateString('pt-BR') : 'N/D'}
+                </span>
                 {os.data_finalizacao && (
-                  <span className="flex items-center gap-1 text-emerald-600"><CheckCircle size={14}/> Fim: {os.data_finalizacao?.toDate().toLocaleDateString('pt-BR')}</span>
+                  <span className="flex items-center gap-1 text-emerald-600">
+                    <CheckCircle size={14}/> Fim: {os.data_finalizacao?.toDate ? os.data_finalizacao.toDate().toLocaleDateString('pt-BR') : 'N/D'}
+                  </span>
                 )}
               </div>
             </div>
@@ -141,7 +130,7 @@ export default function Historico() {
               <div>
                 <p className="font-bold text-slate-800 uppercase text-xs text-blue-600 mb-1">Equipamento</p>
                 <p className="font-black text-slate-700 uppercase">{os.marca} - {os.modelo}</p>
-                <p className="text-xs text-slate-500 font-mono mt-0.5">S/N: {os.serial}</p>
+                <p className="text-xs text-slate-500 font-mono mt-0.5 uppercase">S/N: {os.serial}</p>
               </div>
               <div>
                 <p className="font-bold text-slate-800 uppercase text-xs text-blue-600 mb-1">Responsável / Cliente</p>
@@ -180,7 +169,7 @@ export default function Historico() {
 
         {historico.length === 0 && !carregando && (
           <div className="text-center py-16 bg-white rounded-3xl border border-slate-200 border-dashed">
-            <p className="text-slate-400 font-medium">Insira o número de série acima para puxar a ficha completa do equipamento.</p>
+            <p className="text-slate-400 font-medium">Insira o número de série ou modelo acima para puxar a ficha completa do equipamento.</p>
           </div>
         )}
       </div>

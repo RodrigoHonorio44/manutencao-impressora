@@ -12,18 +12,15 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   useEffect(() => {
     const buscarPecas = async () => {
       try {
-        // Busca ampla no estoque para evitar problemas de Case-Sensitive no where do Firestore
         const querySnapshot = await getDocs(collection(db, "estoque_pecas"));
         const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
         const marcaOs = (chamado.marca || '').toLowerCase().trim();
         const modeloOs = (chamado.modelo || '').toLowerCase().trim();
         
-        // Remove parênteses para isolar os números chaves (ex: transforma "(laser 408 / mfp 432)" em termos limpos)
         const modeloLimpo = modeloOs.replace(/[\(\)]/g, ' '); 
         const termosModelo = modeloLimpo.split(/[^a-zA-Z0-9]/).filter(t => t.length >= 3);
 
-        // Identifica se o equipamento pertence à grande família mecânica Brother L5000 / L6000
         const ehFamiliaBrotherL5000_L6000 = marcaOs.includes('brother') && (
           modeloOs.includes('5000') || 
           modeloOs.includes('6000') || 
@@ -33,7 +30,6 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           modeloOs.includes('6402')
         );
 
-        // TENTATIVA 1: Filtro cruzado por marca e termos do modelo
         let filtradas = listaDados.filter(peca => {
           if (peca.qtd <= 0) return false;
 
@@ -41,15 +37,12 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           const nomePeca = peca.nome ? peca.nome.toLowerCase().trim() : '';
           const modeloPeca = peca.modelo ? peca.modelo.toLowerCase().trim() : '';
 
-          // Validação flexível de marca
           if (marcaOs && marcaPeca && marcaPeca !== marcaOs) {
             if (!nomePeca.includes(marcaOs) && !modeloPeca.includes(marcaOs)) {
               return false;
             }
           }
 
-          // REGRA DE OURO PARA BROTHER SÉRIE L5000/L6000:
-          // Se a OS for desse ecossistema, puxa qualquer insumo compatível cadastrado para a série
           if (ehFamiliaBrotherL5000_L6000) {
             const pecaServeNaFamilia = 
               modeloPeca.includes('l5000') || 
@@ -58,20 +51,17 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
               modeloPeca.includes('5102') ||
               nomePeca.includes('l5000') || 
               nomePeca.includes('l6000') ||
-              nomePeca.includes('tn3472'); // Código do toner comum à fusão deles
+              nomePeca.includes('tn3472');
 
             if (pecaServeNaFamilia) return true;
           }
 
-          // Confere se o modelo ou nome da peça possui o nome completo do modelo ou os termos isolados
           const matchDireto = modeloPeca.includes(modeloOs) || modeloOs.includes(modeloPeca) || nomePeca.includes(modeloOs);
           const matchTermos = termosModelo.some(termo => modeloPeca.includes(termo) || nomePeca.includes(termo));
 
           return matchDireto || matchTermos;
         });
 
-        // TENTATIVA 2 (FALLBACK): Se a filtragem rígida sumir com os itens da tela,
-        // força a busca puramente pelos termos principais numéricos (ex: "408")
         if (filtradas.length === 0 && termosModelo.length > 0) {
           filtradas = listaDados.filter(peca => {
             if (peca.qtd <= 0) return false;
@@ -158,9 +148,10 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   const salvarPendencia = async () => {
     if(!pendencia) return toast.error("Digite o que está faltando.");
     try {
+      // Padroniza o texto digitado da peça pendente para letras minúsculas
       await updateDoc(doc(db, "atendimentos", chamado.id), { 
         status: 'Aguardando Peça',
-        peca_pendente: pendencia,
+        peca_pendente: pendencia.toLowerCase().trim(),
         relatorio_tecnico: relatorio
       });
       toast.success("Status: Aguardando Peça");
@@ -184,61 +175,87 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
-      <div className="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden border border-slate-200">
-        <div className="p-6 border-b flex justify-between items-center bg-slate-50">
+    // p-2 no mobile para dar o máximo de área útil e evitar cortes nas laterais
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-2 md:p-4 overflow-y-auto">
+      {/* max-h-[95vh] controla o tamanho vertical máximo no celular e ativa rolagem interna se necessário */}
+      <div className="bg-white rounded-2xl md:rounded-3xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[95vh] md:max-h-none overflow-hidden border border-slate-200">
+        
+        {/* Cabeçalho */}
+        <div className="p-4 md:p-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
           <div>
-            <h2 className="text-xl font-black text-slate-800 uppercase">Gerenciar OS</h2>
-            <p className="text-xs text-blue-600 font-bold">{chamado.marca} {chamado.modelo} - SN: {chamado.serial}</p>
+            <h2 className="text-lg md:text-xl font-black text-slate-800 uppercase">Gerenciar OS</h2>
+            <p className="text-xs text-blue-600 font-bold uppercase">{chamado.marca} {chamado.modelo} - SN: {chamado.serial}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20}/></button>
         </div>
 
-        <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Corpo do Modal com Rolagem Independente no Mobile */}
+        <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-3 gap-6 overflow-y-auto md:overflow-visible">
           
           {/* Coluna 1: Peças */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><Package size={14}/> Estoque Disponível</h3>
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+            {/* Altura reduzida para max-h-44 no mobile para não achatar o formulário */}
+            <div className="space-y-2 max-h-44 md:max-h-64 overflow-y-auto pr-1">
               {pecasEstoque.map(peca => (
-                <button key={peca.id} onClick={() => adicionarPeca(peca)} className="w-full p-3 text-left border rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-all flex justify-between items-center group">
-                  <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700">{peca.nome}</span>
-                  <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500">{peca.qtd}</span>
+                <button 
+                  key={peca.id} 
+                  onClick={() => adicionarPeca(peca)} 
+                  className="w-full p-3 text-left border rounded-xl hover:border-blue-500 active:bg-blue-100 md:hover:bg-blue-50 transition-all flex justify-between items-center group"
+                >
+                  <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700 break-words max-w-[80%]">{peca.nome}</span>
+                  <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500 shrink-0">{peca.qtd}</span>
                 </button>
               ))}
               {pecasEstoque.length === 0 && (
-                <p className="text-xs text-slate-400 italic py-4">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
+                <p className="text-xs text-slate-400 italic py-2">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
               )}
             </div>
           </div>
 
-          {/* Coluna 2: Relatório (O que foi feito) */}
+          {/* Coluna 2: Relatório */}
           <div className="space-y-4 md:col-span-2">
             <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><FileText size={14}/> Relatório do Serviço</h3>
             <textarea 
               value={relatorio} 
               onChange={(e) => setRelatorio(e.target.value)}
               placeholder="Descreva aqui o serviço realizado (ex: Limpeza da unidade de imagem, troca de rolo pressor...)"
-              className="w-full p-4 border rounded-2xl h-32 outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-slate-50 font-medium"
+              className="w-full p-3 md:p-4 border rounded-2xl h-28 md:h-32 outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-slate-50 font-medium"
             />
             
-            <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100 space-y-3">
+            {/* Sessão de Peça Pendente Adaptada */}
+            <div className="bg-amber-50 p-3 md:p-4 rounded-2xl border border-amber-100 space-y-3">
               <h3 className="flex items-center gap-2 font-bold text-amber-600 text-[10px] uppercase tracking-widest"><Clock size={14}/> Caso falte peça:</h3>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input 
-                  value={pendencia} onChange={(e) => setPendencia(e.target.value)}
+                  value={pendencia} 
+                  onChange={(e) => setPendencia(e.target.value)}
                   placeholder="Nome da peça pendente"
-                  className="flex-1 p-2 border rounded-xl outline-none text-xs bg-white"
+                  className="flex-1 p-2.5 border rounded-xl outline-none text-xs bg-white font-medium"
                 />
-                <button onClick={salvarPendencia} className="bg-amber-500 text-white px-4 py-2 rounded-xl font-bold text-xs hover:bg-amber-600 transition-all">Pausar OS</button>
+                <button 
+                  onClick={salvarPendencia} 
+                  className="bg-amber-500 text-white px-4 py-2.5 rounded-xl font-bold text-xs hover:bg-amber-600 active:bg-amber-700 transition-all text-center shrink-0"
+                >
+                  Pausar OS
+                </button>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="p-6 bg-slate-50 border-t flex gap-4">
-          <button onClick={onClose} className="flex-1 py-3 font-bold text-slate-500 hover:text-slate-800 transition-colors uppercase text-xs">Cancelar</button>
-          <button onClick={finalizarOS} className="flex-[2] bg-emerald-600 text-white py-3 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-xl shadow-emerald-200 uppercase tracking-widest text-sm">
+        {/* Rodapé Dinâmico */}
+        <div className="p-4 md:p-6 bg-slate-50 border-t flex flex-col-reverse sm:flex-row gap-3 shrink-0">
+          <button 
+            onClick={onClose} 
+            className="w-full sm:flex-1 py-3 font-bold text-slate-500 active:bg-slate-200 rounded-xl transition-all uppercase text-xs text-center"
+          >
+            Cancelar
+          </button>
+          <button 
+            onClick={finalizarOS} 
+            className="w-full sm:flex-[2] bg-emerald-600 text-white py-3 rounded-xl md:rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 active:bg-emerald-800 shadow-xl shadow-emerald-200/50 uppercase tracking-widest text-xs md:text-sm"
+          >
             <CheckCircle size={18}/> Finalizar e Entregar
           </button>
         </div>

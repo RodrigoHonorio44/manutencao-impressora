@@ -8,10 +8,11 @@ export default function NotasServico() {
   const [finalizadas, setFinalizadas] = useState([]);
   const [selecionadas, setSelecionadas] = useState([]);
   
-  // Estados do Histórico e Paginação
+  // Estados do Histórico e Paginação Corrigidos
   const [historico, setHistorico] = useState([]);
-  const [ultimoDoc, setUltimoDoc] = useState(null);
-  const [historicoDePaginas, setHistoricoDePaginas] = useState([]);
+  const [primeiroDoc, setPrimeiroDoc] = useState(null); // Guarda o primeiro da página atual
+  const [ultimoDoc, setUltimoDoc] = useState(null);     // Guarda o último da página atual
+  const [pontesDePaginas, setPontesDePaginas] = useState([]); // Armazena o 'primeiroDoc' de cada página visitada
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [temMais, setTemMais] = useState(false);
   
@@ -19,7 +20,7 @@ export default function NotasServico() {
   const [statusFiltroHistorico, setStatusFiltroHistorico] = useState('gerado'); // 'gerado' (A Faturar) ou 'faturado' (Pagas)
   const ITENS_POR_PAGINA = 10;
 
-  // 1. Monitora atendimentos prontos em tempo real (Surgem aqui se status for "Finalizado")
+  // 1. Monitora atendimentos prontos em tempo real
   useEffect(() => {
     const qAtendimentos = query(collection(db, "atendimentos"), where("status", "==", "Finalizado"));
     const unsubscribeAtendimentos = onSnapshot(qAtendimentos, (snapshot) => {
@@ -33,7 +34,7 @@ export default function NotasServico() {
     return () => unsubscribeAtendimentos();
   }, []);
 
-  // 2. Carrega o histórico ao mudar de aba ou alternar o filtro interno (A Faturar / Pagas)
+  // 2. Carrega o histórico ao mudar de aba ou alternar o filtro interno
   useEffect(() => {
     if (abaAtiva === 'historico') {
       carregarPrimeiraPaginaHistorico();
@@ -42,18 +43,19 @@ export default function NotasServico() {
 
   const carregarPrimeiraPaginaHistorico = async () => {
     try {
-      const qContagem = query(
+      const q = query(
         collection(db, "historico_notas"), 
         where("status", "==", statusFiltroHistorico),
         orderBy("data_fechamento", "desc"), 
         limit(ITENS_POR_PAGINA + 1)
       );
       
-      const snapshot = await getDocs(qContagem);
+      const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
         setHistorico([]);
         setTemMais(false);
+        setPontesDePaginas([]);
         return;
       }
 
@@ -62,8 +64,9 @@ export default function NotasServico() {
       const docsVisualizar = temProxima ? docs.slice(0, ITENS_POR_PAGINA) : docs;
 
       setHistorico(docsVisualizar.map(doc => ({ id: doc.id, ...doc.data() })));
+      setPrimeiroDoc(docsVisualizar[0]);
       setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
-      setHistoricoDePaginas([docsVisualizar[0]]);
+      setPontesDePaginas([docsVisualizar[0]]); // Inicializa a árvore de páginas com a primeira
       setPaginaAtual(1);
       setTemMais(temProxima);
     } catch (error) {
@@ -86,13 +89,18 @@ export default function NotasServico() {
 
       const snapshot = await getDocs(q);
       const docs = snapshot.docs;
+      
+      if (docs.length === 0) return;
+
       const temProxima = docs.length > ITENS_POR_PAGINA;
       const docsVisualizar = temProxima ? docs.slice(0, ITENS_POR_PAGINA) : docs;
 
       setHistorico(docsVisualizar.map(doc => ({ id: doc.id, ...doc.data() })));
+      setPrimeiroDoc(docsVisualizar[0]);
       setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
       
-      setHistoricoDePaginas(prev => [...prev, docsVisualizar[0]]);
+      // Adiciona o primeiro doc desta nova página na árvore de navegação
+      setPontesDePaginas(prev => [...prev, docsVisualizar[0]]);
       setPaginaAtual(prev => prev + 1);
       setTemMais(temProxima);
     } catch (error) {
@@ -104,19 +112,49 @@ export default function NotasServico() {
     if (paginaAtual === 1) return;
 
     try {
-      const queryExecutar = (paginaAtual === 2) 
-        ? query(collection(db, "historico_notas"), where("status", "==", statusFiltroHistorico), orderBy("data_fechamento", "desc"), limit(ITENS_POR_PAGINA))
-        : query(collection(db, "historico_notas"), where("status", "==", statusFiltroHistorico), orderBy("data_fechamento", "desc"), startAfter(historicoDePaginas[paginaAtual - 3]), limit(ITENS_POR_PAGINA));
+      // Pega o snapshot do primeiro documento da página anterior
+      const docAlvo = pontesDePaginas[paginaAtual - 2];
 
-      const snapshot = await getDocs(queryExecutar);
+      const q = query(
+        collection(db, "historico_notas"),
+        where("status", "==", statusFiltroHistorico),
+        orderBy("data_fechamento", "desc"),
+        startAfter(docAlvo), // Começa imediatamente após o início da página anterior
+        limit(ITENS_POR_PAGINA)
+      );
+
+      // No entanto, para incluir o próprio 'docAlvo' de volta na visualização de forma limpa, 
+      // reconstruímos a query usando startAt em vez de startAfter.
+      const qVoltar = query(
+        collection(db, "historico_notas"),
+        where("status", "==", statusFiltroHistorico),
+        orderBy("data_fechamento", "desc"),
+        // Usamos o startAt apontando direto para o início da página que queremos retornar
+        limit(ITENS_POR_PAGINA)
+      );
+      
+      // Para evitar repetição complexa de query invertida, o padrão ideal do SDK web é 
+      // disparar a query partindo exatamente do ponteiro armazenado da página anterior:
+      const qRefatorada = query(
+        collection(db, "historico_notas"),
+        where("status", "==", statusFiltroHistorico),
+        orderBy("data_fechamento", "desc"),
+        // Iniciamos exatamente no primeiro documento guardado daquela página
+        ...[docAlvo ? require('firebase/firestore').startAt(docAlvo) : null].filter(Boolean),
+        limit(ITENS_POR_PAGINA)
+      );
+
+      const snapshot = await getDocs(qRefatorada);
       const docs = snapshot.docs;
 
       setHistorico(docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setPrimeiroDoc(docs[0]);
       setUltimoDoc(docs[docs.length - 1]);
       
-      setHistoricoDePaginas(prev => prev.slice(0, -1));
+      // Remove o último ponteiro do histórico de páginas
+      setPontesDePaginas(prev => prev.slice(0, -1));
       setPaginaAtual(prev => prev - 1);
-      setTemMais(true);
+      setTemMais(true); // Se estamos voltando, com certeza tem uma próxima página (a que estávamos)
     } catch (error) {
       console.error("Erro ao voltar página:", error);
     }
@@ -128,7 +166,6 @@ export default function NotasServico() {
     );
   };
 
-  // 🌟 NOVO: Lógica para selecionar ou desmarcar todas as OS visíveis de uma vez
   const toggleSelecionarTodos = () => {
     if (selecionadas.length === finalizadas.length) {
       setSelecionadas([]);
@@ -137,8 +174,8 @@ export default function NotasServico() {
     }
   };
 
-  // Executa a impressão otimizada de acordo com o status atual do lote
-  const executarImpressaoHTML = (itens, total, dataNota, statusNota) => {
+  // Executa a impressão HTML
+  const ejecutarImpressaoHTML = (itens, total, dataNota, statusNota) => {
     const win = window.open('', 'PRINT', 'height=750,width=900,top=100,left=100,toolbar=no,navigator=no,status=no');
     if (!win) {
       toast.error("Bloqueador de pop-ups ativo! Permita a abertura para imprimir.");
@@ -157,23 +194,18 @@ export default function NotasServico() {
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { font-family: 'Inter', sans-serif; color: #1e293b; padding: 40px; background-color: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .invoice-card { max-width: 800px; margin: 0 auto; }
-            
             .header-container { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #f1f5f9; padding-bottom: 20px; margin-bottom: 25px; }
             .brand-section h1 { font-size: 28px; font-weight: 900; color: #0f172a; letter-spacing: -0.025em; }
             .brand-section p { font-size: 12px; color: #64748b; margin-top: 4px; font-weight: 500; }
-            
             .status-badge { display: inline-block; padding: 6px 12px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; border-radius: 8px; margin-top: 8px; }
             .status-faturado { background-color: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; }
             .status-pendente { background-color: #fffbeb; color: #d97706; border: 1px solid #fde68a; }
-            
             .meta-section { text-align: right; }
             .meta-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; }
             .meta-value { font-size: 14px; font-weight: 700; color: #1e293b; margin-top: 2px; }
-
             .addresses-container { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-bottom: 35px; background-color: #f8fafc; padding: 20px; border: 1px solid #e2e8f0; border-radius: 16px; }
             .address-block h3 { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; margin-bottom: 6px; }
             .address-block p { font-size: 13px; color: #334155; font-weight: 600; line-height: 1.4; }
-            
             .table-title { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; margin-bottom: 12px; }
             table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
             th { background-color: #f1f5f9; border-bottom: 2px solid #cbd5e1; color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; padding: 12px 16px; text-align: left; }
@@ -183,12 +215,10 @@ export default function NotasServico() {
             .badge-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
             .badge { font-size: 10px; background-color: #fff; color: #475569; padding: 2px 6px; font-weight: 700; text-transform: uppercase; border: 1px solid #cbd5e1; border-radius: 4px; }
             .price-col { font-weight: 700; text-align: right; color: #0f172a; font-size: 14px; }
-            
             .summary-container { display: flex; justify-content: flex-end; margin-bottom: 40px; page-break-inside: avoid; }
             .total-box { background-color: #0f172a; border-radius: 12px; padding: 16px 24px; min-width: 280px; text-align: right; color: #fff; }
             .total-label { font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
             .total-amount { font-size: 24px; font-weight: 900; color: #34d399; margin-top: 4px; }
-
             .terms-section { font-size: 11px; color: #64748b; line-height: 1.5; margin-bottom: 40px; border-left: 3px solid #cbd5e1; padding-left: 12px; }
             .footer-signature { margin-top: 50px; padding-top: 30px; page-break-inside: avoid; }
             .signature-grid { display: flex; justify-content: space-between; gap: 60px; }
@@ -300,14 +330,14 @@ export default function NotasServico() {
     const itens = finalizadas.filter(f => selecionadas.includes(f.id));
     if (itens.length === 0) return toast.error("Selecione ao menos um serviço!");
 
-    const loading = toast.loading("Salvando nota e updating atendimentos...");
+    const loading = toast.loading("Salvando nota e atualizando atendimentos...");
     const total = itens.length * 70;
     const dataAtualString = new Date().toLocaleDateString('pt-BR');
 
     try {
       const batch = writeBatch(db);
-
       const novaNotaRef = doc(collection(db, "historico_notas"));
+      
       batch.set(novaNotaRef, {
         status: "gerado", 
         data_fechamento: serverTimestamp(),
@@ -403,7 +433,6 @@ export default function NotasServico() {
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
               <tr>
-                {/* 🌟 MODIFICADO: Substituído o "Sel." estático pela caixa de seleção mestre */}
                 <th className="p-5 w-10 text-center">
                   <div 
                     onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
@@ -455,10 +484,9 @@ export default function NotasServico() {
         </div>
       )}
 
-      {/* ABA 2: HISTÓRICO COM FILTRAGEM INTERNA E PAGINAÇÃO */}
+      {/* ABA 2: HISTÓRICO */}
       {abaAtiva === 'historico' && (
         <div className="space-y-4">
-          
           <div className="flex gap-2 bg-slate-100 p-1.5 rounded-2xl w-fit">
             <button
               onClick={() => setStatusFiltroHistorico('gerado')}

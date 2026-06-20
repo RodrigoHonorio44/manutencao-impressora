@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Search, ShieldAlert, BookOpen, Printer, AlertTriangle, Info } from 'lucide-react';
 
 // BANCO DE DADOS TÉCNICO INTERNO EXPANDIDO VIA MANUAIS DE SERVIÇO DE FÁBRICA
+// 🌟 CORREÇÃO: Alterado de "Phantom" para "Pantum" para manter a precisão com o mercado
 const MANUAL_ERROS_IMPRESSORAS = {
   Brother: [
     { codigo: "Self-Diagnostic", causa: "Superaquecimento ou falha de leitura térmica no Fusor.", solucao: "Verificar continuidade da Lâmpada (LM0134001), resistência do Termistor (LT3211001) ou resetar o erro pelo Modo Manutenção (Menu 99)." },
@@ -38,10 +39,10 @@ const MANUAL_ERROS_IMPRESSORAS = {
     { codigo: "59.WX.YZ", causa: "Erro nos motores principais de tração das engrenagens (Motor Error).", solucao: "Garantir que o cartucho de toner não está travado mecanicamente e verificar os cabos da placa controladora DC." },
     { codigo: "60.WX.YZ", causa: "Falha no motor responsável pelo elevador de subida de papel da gaveta 2 (Tray Motor).", solucao: "Reduzir o volume de folhas na gaveta, checar se as guias laterais não estão apertadas demais e testar o atuador." }
   ],
-  Phantom: [
+  Pantum: [
     { codigo: "Erro 58", causa: "Fuser Error. Temperatura do bloco de fusão abaixo ou acima do limite de segurança.", solucao: "Inspecionar continuidade da lâmpada de aquecimento cerâmico e medir o termistor. Resetar via Menu de Configuração." },
     { codigo: "Erro 11 / Atolamento", causa: "Falha de alimentação de papel vindo da Gaveta Principal (Tray 1).", solucao: "Limpar o rolo de pick-up com álcool isopropílico ou trocar a borracha se estiver lisa. Checar mola do sensor." },
-    { codigo: "Erro 31", causa: "Cartucho de Toner defeituoso ou Chip regionalizado/incompatível com o firmware.", solucao: "Limpar contatos do leitor de chip na lateral interna da máquina ou substituir por insumo homologado." },
+    { codigo: "Erro 31", causa: "Cartucho de Toner defeituoso ou Chip regionalizado/incompatível com o firmware.", solucao: "Limpar contatos del leitor de chip na lateral interna da máquina ou substituir por insumo homologado." },
     { codigo: "Erro 84", causa: "Cilindro Fotocondutor (Drum) no fim da vida útil de rotações.", solucao: "Trocar unidade de imagem ou realizar reset de ciclo abrindo a tampa e acessando o painel." }
   ],
   Samsung: [
@@ -51,7 +52,6 @@ const MANUAL_ERROS_IMPRESSORAS = {
   ]
 };
 
-// DIRETRIZES EXCLUSIVAS DE ACESSO AO MODO TÉCNICO E MANUTENÇÃO DE BANCADA
 const INSTRUCOES_TECH_MODE = {
   "HP (Laser 408 / MFP 432)": {
     titulo: "Tech Mode (Menu de Engenharia)",
@@ -63,7 +63,7 @@ const INSTRUCOES_TECH_MODE = {
     procedimento: "Para painéis de 2 linhas (M404): Pressione o botão Seta para a Esquerda ➔ botão Cancelar (X) ➔ Seta para a Esquerda ➔ botão Voltar (Seta curvada). Para modelos Touchscreen (M428): Acesse Configuração ➔ Menu de Serviço (pode solicitar código de acesso da etiqueta traseira).",
     alerta: "Ative o 'Repair Mode' antes de testar toners de teste para não queimar o chip permanente!"
   },
-  "Phantom": {
+  Pantum: {
     titulo: "Menu de Configuração de Fábrica",
     procedimento: "Desligue o equipamento no botão traseiro. Segure pressionados os botões 'OK' e 'Seta para a Direita' simultaneamente e ligue a chave de energia. Mantenha pressionado até surgir 'Config Menu' ou 'Configuration Menu' no visor.",
     alerta: "Essencial para resetar contadores de fusão e forçar calibração de sensores ópticos."
@@ -97,7 +97,6 @@ export default function Manuais() {
   const [marcaManual, setMarcaManual] = useState('');
   const [buscaErro, setBuscaErro] = useState('');
 
-  // LÓGICA DE BUSCA INTELIGENTE (RESOLVE ERROS DO TIPO 50.2 OU ERROS DIRETOS)
   const obterErrosFiltrados = () => {
     if (!marcaManual) return [];
 
@@ -105,25 +104,20 @@ export default function Manuais() {
 
     if (buscaErro) {
       const termo = buscaErro.toLowerCase().trim();
-      
-      // Extrai os primeiros números se o técnico digitar algo como "50.2" ou "13.1"
       const prefixoNumerico = termo.match(/^(\d+)/);
 
       return baseErros.filter(err => {
         const codigoFormatado = err.codigo.toLowerCase();
         
-        // Regra 1: Se o técnico digitou "50.2" e o código começa com "50", dá Match!
         if (prefixoNumerico && codigoFormatado.startsWith(prefixoNumerico[1])) {
           return true;
         }
 
-        // Regra 2: Se o técnico digitou uma letra tipo "U1" ou "A1", isola o prefixo de letras
         const prefixoLetras = termo.match(/^([a-zA-Z\d]+)/);
         if (prefixoLetras && (codigoFormatado.startsWith(prefixoLetras[1]) || codigoFormatado.includes(prefixoLetras[1]))) {
           return true;
         }
 
-        // Regra 3: Busca padrão por texto na causa, solução ou código completo
         return (
           codigoFormatado.includes(termo) || 
           err.causa.toLowerCase().includes(termo) || 
@@ -159,7 +153,7 @@ export default function Manuais() {
               value={marcaManual} 
               onChange={(e) => {
                 setMarcaManual(e.target.value);
-                setBuscaErro(''); // Limpa a busca anterior ao trocar de máquina
+                setBuscaErro('');
               }}
               className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm font-medium text-slate-700"
             >
@@ -188,9 +182,9 @@ export default function Manuais() {
         </div>
       </section>
 
-      {/* BLOCO DINÂMICO DO MODO TÉCNICO - APARECE SÓ COM O MODELO SELECIONADO */}
+      {/* BLOCO DINÂMICO DO MODO TÉCNICO */}
       {marcaManual && INSTRUCOES_TECH_MODE[marcaManual] && (
-        <section className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 rounded-2xl border border-slate-700 shadow-md animate-fade-in space-y-4">
+        <section className="bg-gradient-to-r from-slate-800 to-slate-900 text-white p-5 rounded-2xl border border-slate-700 shadow-md space-y-4">
           <div className="flex items-center gap-2 text-amber-400">
             <Info size={18} />
             <h3 className="font-bold text-sm tracking-wide uppercase">
@@ -217,7 +211,7 @@ export default function Manuais() {
             </div>
           )}
 
-          {/* LISTAGEM DOS PROCEDIMENTOS DE RESET DE CONSUMÍVEIS (BANDAS, FUSOR, ROLETES) */}
+          {/* LISTAGEM DOS PROCEDIMENTOS DE RESET DE CONSUMÍVEIS */}
           {INSTRUCOES_TECH_MODE[marcaManual].procedimentosReset && (
             <div className="pt-2 border-t border-slate-700 space-y-2">
               <span className="text-[10px] font-bold tracking-wider text-emerald-400 uppercase block">Rotinas Rápidas de Reset (Após Troca de Peças):</span>
@@ -241,10 +235,10 @@ export default function Manuais() {
       {/* Cards de Resposta Rápida */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {obterErrosFiltrados().map((err, index) => (
-          <div key={index} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-amber-300 transition-all flex flex-col justify-between space-y-4">
+          <div key={`${marcaManual}-${err.codigo}-${index}`} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-amber-300 transition-all flex flex-col justify-between space-y-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="bg-amber-50 text-amber-800 font-mono text-xs font-black px-3 py-1 rounded-xl border border-amber-200">
+                <span className="bg-amber-50 text-amber-800 font-mono text-xs font-black px-3 py-1 rounded-xl border border-amber-200 uppercase">
                   CÓDIGO: {err.codigo}
                 </span>
                 <span className="text-[10px] uppercase bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -267,7 +261,7 @@ export default function Manuais() {
           </div>
         ))}
 
-        {/* Estado Inicial: Nenhum modelo selecionado */}
+        {/* Estado Inicial */}
         {!marcaManual && (
           <div className="col-span-full flex flex-col items-center justify-center py-16 bg-white rounded-2xl border border-dashed text-slate-400 text-sm p-4 text-center">
             <BookOpen size={40} className="text-slate-300 mb-2.5" />
@@ -276,7 +270,7 @@ export default function Manuais() {
           </div>
         )}
 
-        {/* Estado de Busca: Modelo selecionado mas termo não encontrado */}
+        {/* Estado de Busca Vazio */}
         {marcaManual && obterErrosFiltrados().length === 0 && (
           <div className="col-span-full flex flex-col items-center justify-center py-12 bg-white rounded-2xl border border-dashed text-slate-400 text-sm p-4 text-center">
             <AlertTriangle size={32} className="text-slate-300 mb-2" />

@@ -5,11 +5,16 @@ import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCir
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
 
+// 🌟 LISTA DE CLIENTES/UNIDADES PADRONIZADOS
+const CLIENTES_DISPONIVEIS = [
+  { id: "conde modesto leal", nomeExibicao: "Conde Modesto Leal" }
+];
+
 const MODELOS_DISPONIVEIS = {
   "Brother": ["HL-L5102DW","HL-L6202DW", "DCP-L5652DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
   "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
-  "Phantom": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Phantom"],
+  "Pantum": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Pantum"],
   "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
   "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"]
 };
@@ -48,14 +53,12 @@ export default function Manutencao() {
   // Efeito para buscar histórico quando o Serial for digitado
   useEffect(() => {
     const buscarHistorico = async () => {
-      // Evita buscar se o campo estiver vazio
       if (!form.serial.trim()) {
         setHistoricoEquipamento([]);
         return;
       }
 
-      try {
-        // Busca todos os registros antigos desse mesmo serial no banco
+    try {
         const q = query(
           collection(db, "atendimentos"),
           where("serial", "==", form.serial.trim().toLowerCase())
@@ -67,7 +70,6 @@ export default function Manutencao() {
           ...doc.data()
         }));
 
-        // Ordena do mais recente para o mais antigo baseado na data de entrada
         rascunhoHistorico.sort((a, b) => {
           const dataA = a.data_entrada?.seconds || 0;
           const dataB = b.data_entrada?.seconds || 0;
@@ -80,7 +82,6 @@ export default function Manutencao() {
       }
     };
 
-    // Aplica um pequeno delay (Debounce) para não sobrecarregar o Firebase a cada tecla digitada
     const delayBusca = setTimeout(() => {
       buscarHistorico();
     }, 600);
@@ -96,6 +97,9 @@ export default function Manutencao() {
 
   const handleEntrada = async (e) => {
     e.preventDefault();
+    if (!form.cliente) {
+      return toast.error("Selecione um Cliente / Unidade!");
+    }
     if (!form.marca || !form.modelo || !form.serial) {
       return toast.error("Marca, Modelo e Serial são obrigatórios!");
     }
@@ -104,7 +108,6 @@ export default function Manutencao() {
     const numeroOS = gerarNumeroOS();
 
     try {
-      // Salvando os dados padronizados em lowercase conforme sua estrutura de busca
       await addDoc(collection(db, "atendimentos"), {
         cliente: form.cliente.toLowerCase(),
         marca: form.marca,
@@ -139,12 +142,18 @@ export default function Manutencao() {
         </div>
         
         <form onSubmit={handleEntrada} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <input 
-            placeholder="Cliente / Unidade" 
-            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm" 
-            value={form.cliente} 
-            onChange={(e) => setForm({...form, cliente: e.target.value})} 
-          />
+          
+          {/* 🌟 ALTERADO DE INPUT PARA SELECT COM A OPÇÃO CONDE MODESTO LEAL */}
+          <select
+            value={form.cliente}
+            onChange={(e) => setForm({...form, cliente: e.target.value})}
+            className="p-3 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm"
+          >
+            <option value="">Selecione o Cliente / Unidade...</option>
+            {CLIENTES_DISPONIVEIS.map((cli) => (
+              <option key={cli.id} value={cli.id}>{cli.nomeExibicao}</option>
+            ))}
+          </select>
           
           <select
             value={form.marca}
@@ -171,7 +180,6 @@ export default function Manutencao() {
             ))}
           </select>
 
-          {/* NÚMERO DE SÉRIE COM ALERTA DE HISTÓRICO COPLANAR */}
           <div className="flex flex-col space-y-1">
             <input 
               placeholder="S/N (Número de Série)" 
@@ -284,7 +292,7 @@ export default function Manutencao() {
       {/* MODAL DO HISTÓRICO DE MANUTENÇÃO ANTERIOR */}
       {modalHistoricoAberto && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100 animate-scale-in">
+          <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50 rounded-t-2xl">
               <div className="flex items-center gap-2 text-slate-800">
                 <History className="text-amber-500" size={20} />
@@ -315,7 +323,9 @@ export default function Manutencao() {
                       Entrada: {hist.data_entrada?.toDate().toLocaleDateString('pt-BR')} às {hist.data_entrada?.toDate().toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
                     </span>
                     <span className={`px-2 py-0.5 text-[9px] font-black rounded uppercase border ${
-                      hist.status === 'Finalizado' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-50 border-slate-200'
+                      hist.status === 'Finalizado' || hist.status === 'Faturado' 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                        : 'bg-slate-100 text-slate-700 border-slate-200'
                     }`}>
                       {hist.status}
                     </span>

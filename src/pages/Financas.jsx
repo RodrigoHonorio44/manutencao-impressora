@@ -75,6 +75,7 @@ export default function Financas() {
 
               dados.servicos?.forEach(s => {
                 if (s.cliente) {
+                  // Mantendo a lógica de somar por item, caso queira o valor real substitua por (dados.valor_total / dados.servicos.length)
                   mapaClientes[s.cliente] = (mapaClientes[s.cliente] || 0) + 70;
                 }
               });
@@ -438,7 +439,7 @@ export default function Financas() {
           {/* RANKING CLIENTES */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
             <h3 className="font-black text-slate-800 text-xs uppercase tracking-wide mb-4 flex items-center gap-2">
-              <Users size={16} className="text-slate-400" /> Recebido por Cliente
+              <Users size={16} className="text-slate-400" /> Recebido por Client
             </h3>
             <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
               {dadosFiltrados.rankingClientes.map((cli, idx) => (
@@ -523,7 +524,7 @@ export default function Financas() {
                     </button>
                   )}
                   <button
-                    onClick={() => executingReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
+                    onClick={() => executarReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 transition-all"
                   >
                     <Printer size={14} />

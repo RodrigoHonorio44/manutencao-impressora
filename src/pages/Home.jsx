@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, onSnapshot, orderBy, where, limit } from 'firebase/firestore';
+import { collection, query, onSnapshot, where } from 'firebase/firestore';
 import { Printer, Package, Clock, CheckCircle, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -24,7 +24,7 @@ export default function Home() {
       const bancada = docs.filter(d => d.status !== 'Finalizado' && d.status !== 'Faturado').length;
       const pendentes = docs.filter(d => d.status === 'Aguardando Peça').length;
       
-      // 🌟 CORREÇÃO: Considera "Finalizado" OU "Faturado" para somar os concluídos do mês atual
+      // Considera "Finalizado" OU "Faturado" para somar os concluídos do mês atual
       const agora = new Date();
       const concluidos = docs.filter(d => {
         const statusValidoConclusao = d.status === 'Finalizado' || d.status === 'Faturado';
@@ -42,7 +42,7 @@ export default function Home() {
       }));
     });
 
-    // 2. Monitorar Estoque (Soma real das quantidades)
+  // 2. Monitorar Estoque (Soma real das quantidades)
     const qEstoque = query(collection(db, "estoque_pecas"));
     const unsubEstoque = onSnapshot(qEstoque, (snapshot) => {
       const total = snapshot.docs.reduce((acc, doc) => acc + (Number(doc.data().qtd) || 0), 0);
@@ -50,20 +50,22 @@ export default function Home() {
     });
 
     // 3. Buscar as últimas impressoras ativas na bancada (Oculta Faturadas/Finalizadas)
+    // Query simplificada para evitar bugs de ordenação e necessidade de índices complexos
     const qRecentes = query(
       collection(db, "atendimentos"), 
-      where("status", "not-in", ["Finalizado", "Faturado"]),
-      orderBy("status"),
-      orderBy("data_entrada", "desc"), 
-      limit(3)
+      where("status", "not-in", ["Finalizado", "Faturado"])
     );
+    
     const unsubRecentes = onSnapshot(qRecentes, (snapshot) => {
       const dadosTratados = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Ordena cronologicamente por data de entrada de forma garantida no cliente
       dadosTratados.sort((a, b) => (b.data_entrada?.seconds || 0) - (a.data_entrada?.seconds || 0));
       
+      // Seleciona apenas as 3 mais recentes no topo
       setUltimasImpressoras(dadosTratados.slice(0, 3));
     }, (error) => {
-      console.error("Erro ao buscar recentes. Verifique se o índice composto foi criado no painel do Firebase.", error);
+      console.error("Erro ao buscar recentes:", error);
     });
 
     return () => {
@@ -114,7 +116,7 @@ export default function Home() {
               <div key={imp.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                 <div>
                   <p className="font-bold text-slate-700 text-sm uppercase">{imp.marca} {imp.modelo}</p>
-                  <p className="text-[10px] text-slate-400 font-mono font-bold">S/N: {imp.serial}</p>
+                  <p className="text-[10px] text-slate-400 font-mono font-bold uppercase">S/N: {imp.serial}</p>
                 </div>
                 <span className={`px-3 py-1 text-[10px] font-black rounded-full uppercase ${
                   imp.status === 'Aguardando Peça' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'

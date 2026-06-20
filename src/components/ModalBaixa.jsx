@@ -9,10 +9,12 @@ export default function ModalBaixa({ chamado, onClose }) {
 
   useEffect(() => {
     const buscarPecas = async () => {
-      // Busca peças que mencionam o modelo da impressora
+      // 1. Convertemos o termo do modelo para minúsculo (.toLowerCase()) para bater com o padrão do banco
+      const termoModelo = chamado.modelo.split('-')[0].trim().toLowerCase();
+
       const q = query(
         collection(db, "estoque_pecas"), 
-        where("modelo", ">=", chamado.modelo.split('-')[0]) 
+        where("modelo", ">=", termoModelo) 
       );
       
       const querySnapshot = await getDocs(q);
@@ -46,9 +48,7 @@ export default function ModalBaixa({ chamado, onClose }) {
         const dadosPeca = pecaDoc.data();
         const novaQtd = dadosPeca.qtd - 1;
 
-        // REGRA DE TRANSMISSÃO INTELIGENTE PARA O HISTÓRICO
         if (novaQtd <= 0) {
-          // 1. Move o lote para o histórico com a data de hoje (fim)
           transaction.set(historicoRef, {
             marca: dadosPeca.marca,
             modelo: dadosPeca.modelo,
@@ -58,14 +58,11 @@ export default function ModalBaixa({ chamado, onClose }) {
             data_fim: serverTimestamp()          
           });
 
-          // 2. Apaga o item do estoque ativo para sumir do sistema
           transaction.delete(pecaRef);
         } else {
-          // Se ainda tem saldo, só atualiza a quantidade subtraindo 1
           transaction.update(pecaRef, { qtd: novaQtd });
         }
         
-        // 3. Atualiza o chamado com a peça usada e muda status
         transaction.update(chamadoRef, { 
           status: 'Finalizado',
           peca_utilizada: peca.nome,
@@ -82,32 +79,43 @@ export default function ModalBaixa({ chamado, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
-        <h2 className="text-xl font-black text-slate-800 mb-2">Finalizar Manutenção</h2>
-        <p className="text-sm text-slate-500 mb-6">Selecione a peça usada na <strong>{chamado.modelo}</strong>:</p>
+    // p-4 previne o modal de colar nas bordas do celular
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 animate-fade-in">
+      {/* max-w-md se adapta ao celular, w-full garante largura total disponível */}
+      <div className="bg-white rounded-2xl p-5 md:p-6 w-full max-w-md shadow-2xl">
+        <h2 className="text-lg md:text-xl font-black text-slate-800 mb-1">Finalizar Manutenção</h2>
+        <p className="text-xs md:text-sm text-slate-500 mb-5">Selecione a peça usada na <strong className="uppercase">{chamado.modelo}</strong>:</p>
 
-        {carregando ? <p className="text-sm text-slate-400 italic text-center py-4">Buscando peças compatíveis...</p> : (
-          <div className="space-y-3 max-h-60 overflow-y-auto mb-6">
+        {carregando ? (
+          <p className="text-sm text-slate-400 italic text-center py-6">Buscando peças compatíveis...</p>
+        ) : (
+          // max-h-64 impede o modal de sumir para fora da tela do celular
+          <div className="space-y-2.5 max-h-64 overflow-y-auto mb-5 pr-1">
             {pecasCompativeis.length > 0 ? pecasCompativeis.map(peca => (
               <button 
                 key={peca.id}
                 onClick={() => confirmarBaixa(peca)}
-                className="w-full flex justify-between items-center p-4 bg-slate-50 hover:bg-blue-50 border border-slate-200 rounded-xl transition-all group"
+                // p-3.5 para melhor clique touch
+                className="w-full flex justify-between items-center p-3.5 bg-slate-50 active:bg-blue-100 md:hover:bg-blue-50 border border-slate-200 rounded-xl transition-all group"
               >
                 <div className="text-left max-w-[70%]">
-                  <p className="font-bold text-slate-700 group-hover:text-blue-700 break-words">{peca.nome}</p>
-                  <p className="text-xs text-slate-400 uppercase font-bold tracking-wider mt-0.5">{peca.marca}</p>
+                  <p className="font-bold text-slate-700 text-sm md:text-base group-hover:text-blue-700 break-words">{peca.nome}</p>
+                  <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mt-0.5">{peca.marca}</p>
                 </div>
-                <span className="bg-white px-2.5 py-1 rounded-lg border font-black text-xs text-blue-600 whitespace-nowrap">
+                <span className="bg-white px-2.5 py-1 rounded-lg border font-black text-[11px] text-blue-600 whitespace-nowrap">
                   {peca.qtd.toString().padStart(2, '0')} DISP.
                 </span>
               </button>
-            )) : <p className="text-center text-slate-400 text-sm italic py-4">Nenhuma peça com saldo encontrada para este modelo.</p>}
+            )) : (
+              <p className="text-center text-slate-400 text-sm italic py-6">Nenhuma peça com saldo encontrada para este modelo.</p>
+            )}
           </div>
         )}
 
-        <button onClick={onClose} className="w-full py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all text-sm">
+        <button 
+          onClick={onClose} 
+          className="w-full py-3 text-slate-500 font-bold active:bg-slate-200 md:hover:bg-slate-100 rounded-xl transition-all text-sm"
+        >
           Cancelar
         </button>
       </div>

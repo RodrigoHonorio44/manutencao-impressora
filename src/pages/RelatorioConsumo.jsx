@@ -1,59 +1,42 @@
 import { useState } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, getDocs, limit, startAfter, orderBy } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, where } from 'firebase/firestore';
 import { FileText, Search, Printer, Calendar, Loader2, ChevronRight, ChevronLeft, BarChart3 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function RelatorioConsumo() {
   const [atendimentos, setAtendimentos] = useState([]);
+  const [atendimentosPaginados, setAtendimentosPaginados] = useState([]);
   const [buscaCliente, setBuscaCliente] = useState('');
   const [filtroDataInicio, setFiltroDataInicio] = useState('');
   const [filtroDataFim, setFiltroDataFim] = useState('');
   const [carregando, setCarregando] = useState(false);
   
-  // Estado isolado para acumular o resumo fiel do lote vindo do banco
+  // Resumo fiel baseado em TODOS os registros filtrados do período/cliente
   const [resumoPecasGastas, setResumoPecasGastas] = useState({});
 
-  // Estados de Paginação Corrigidos
-  const [ultimoDocumento, setUltimoDocumento] = useState(null);
-  const [historicoPaginas, setHistoricoPaginas] = useState([]); // Guardará o primeiro documento de cada página
+  // Paginação em Memória baseada nos dados filtrados (Evita páginas vazias)
   const [paginaAtual, setPaginaAtual] = useState(1);
-  const [temMais, setTemMais] = useState(false);
-  
   const ITENS_POR_PAGINA = 10;
 
-  // 1. Função Principal de Busca e Consolidação Otimizada
-  const buscarDados = async (proximaPagina = false, retrocederPagina = false) => {
+  // 1. Busca e Consolidação Otimizada
+  const buscarDados = async () => {
     setCarregando(true);
+    setPaginaAtual(1);
     
     try {
       let q = collection(db, "atendimentos");
-      let filtros = [orderBy("data_finalizacao", "desc"), limit(ITENS_POR_PAGINA)];
-
-      // Lógica de Paginação Consertada
-      if (proximaPagina && ultimoDocumento) {
-        filtros.push(startAfter(ultimoDocumento));
-      } else if (retrocederPagina && paginaAtual > 1) {
-        // Para voltar à página anterior, usamos o index da página desejada no histórico (paginaAtual - 2)
-        const docAnterior = historicoPaginas[paginaAtual - 2];
-        if (docAnterior) {
-          filtros.push(startAfter(docAnterior));
-        }
-      }
+      // Ordenação inicial por finalização
+      let filtros = [orderBy("data_finalizacao", "desc")];
 
       const queryFinal = query(q, ...filtros);
       const snapshot = await getDocs(queryFinal);
 
       if (snapshot.empty) {
-        if (!proximaPagina && !retrocederPagina) {
-          setAtendimentos([]);
-          setResumoPecasGastas({});
-          setUltimoDocumento(null);
-          setHistoricoPaginas([]);
-          setPaginaAtual(1);
-        }
-        setTemMais(false);
-        setCarregando(false);
+        setAtendimentos([]);
+        setAtendimentosPaginados([]);
+        setResumoPecasGastas({});
+        toast.error("Nenhum atendimento encontrado.");
         return;
       }
 
@@ -63,18 +46,21 @@ export default function RelatorioConsumo() {
       }));
 
       // =========================================================================
-      // 1. PRIMEIRO: Filtragem em memória para exibição exata da página atual
+      // 1. FILTRAGEM COMPLETA EM MEMÓRIA (Garante consistência total dos dados)
       // =========================================================================
       const dadosFiltrados = dadosBrutos.filter(atendimento => {
+        // Validação básica de peças
         const possuiPecas = Array.isArray(atendimento.pecas_utilizadas) && atendimento.pecas_utilizadas.length > 0;
         if (!possuiPecas) return false;
 
+        // Filtro por Cliente/Hospital
         if (buscaCliente.trim()) {
           const nomeClienteBanco = (atendimento.cliente || '').toLowerCase();
           const nomeBuscado = buscaCliente.trim().toLowerCase();
           if (!nomeClienteBanco.includes(nomeBuscado)) return false;
         }
 
+        // Conversão e tratamento de datas
         const dataAtendimentoMs = atendimento.data_finalizacao?.seconds 
           ? atendimento.data_finalizacao.seconds * 1000 
           : new Date(atendimento.data_finalizacao || atendimento.data_entrada).getTime();
@@ -83,22 +69,24 @@ export default function RelatorioConsumo() {
           if (dataAtendimentoMs < new Date(filtroDataInicio).getTime()) return false;
         }
         if (filtroDataFim) {
-          if (dataAtendimentoMs > new Date(filtroDataFim).setHours(23, 59, 59, 999)) return false;
+          // Ajusta para o final do dia escolhido
+          const limiteFim = new Date(filtroDataFim);
+          limiteFim.setHours(23, 59, 59, 999);
+          if (dataAtendimentoMs > limiteFim.getTime()) return false;
         }
         
         return true;
       });
 
       // =========================================================================
-      // 2. SEGUNDO: Contagem baseada RIGOROSAMENTE nos dados filtrados da página
+      // 2. CONTAGEM GLOBAL DE INSUMOS (Gráfico reflete tudo que foi filtrado)
       // =========================================================================
       const acumuladorPecas = {};
       dadosFiltrados.forEach(atendimento => {
         if (Array.isArray(atendimento.pecas_utilizadas)) {
-          // Captura o modelo e limpa possíveis caracteres estranhos (como o '$') vindo do banco
           const modeloEquipamento = (atendimento.modelo || atendimento.modelo_impressora || atendimento.equipamento || '')
             .toUpperCase()
-            .replace(/[^A-Z0-9 ]/g, ''); // Remove cifrões e caracteres especiais
+            .replace(/[^A-Z0-9 ]/g, '');
 
           let sufixoMarca = "OUTROS";
           if (modeloEquipamento.includes("BROTHER") || modeloEquipamento.includes("DCP") || modeloEquipamento.includes("HL")) {
@@ -118,7 +106,6 @@ export default function RelatorioConsumo() {
 
             let nomePadronizado = pecaCrua.trim();
 
-            // Separação inteligente por contexto de marca sem concatenar sufixos indesejados
             if (pecaTexto.includes("PELICULA")) {
               nomePadronizado = `PELÍCULA DE FUSÃO ${sufixoMarca}`;
             } else if (pecaTexto.includes("ROLO") || pecaTexto.includes("PRESSOR")) {
@@ -131,26 +118,12 @@ export default function RelatorioConsumo() {
           });
         }
       });
+
       setResumoPecasGastas(acumuladorPecas);
-      // =========================================================================
-
-      // Atualização dos ponteiros de paginação
-      const ultimoDocAtual = snapshot.docs[snapshot.docs.length - 1];
-      setUltimoDocumento(ultimoDocAtual);
-
-      if (proximaPagina) {
-        setHistoricoPaginas(prev => [...prev, ultimoDocumento]);
-        setPaginaAtual(prev => prev + 1);
-      } else if (retrocederPagina) {
-        setHistoricoPaginas(prev => prev.slice(0, -1));
-        setPaginaAtual(prev => prev - 1);
-      } else {
-        setHistoricoPaginas([]);
-        setPaginaAtual(1);
-      }
-
-      setTemMais(snapshot.docs.length === ITENS_POR_PAGINA);
       setAtendimentos(dadosFiltrados);
+      
+      // Define a exibição da primeira página de forma fatiada
+      setAtendimentosPaginados(dadosFiltrados.slice(0, ITENS_POR_PAGINA));
 
     } catch (error) {
       console.error("Erro ao processar atendimentos:", error);
@@ -158,6 +131,14 @@ export default function RelatorioConsumo() {
     } finally {
       setCarregando(false);
     }
+  };
+
+  // Lógica de navegação local (Rápida e sem re-buscar no Firebase)
+  const mudarPagina = (novaPagina) => {
+    const indiceInicial = (novaPagina - 1) * ITENS_POR_PAGINA;
+    const indiceFinal = indiceInicial + ITENS_POR_PAGINA;
+    setAtendimentosPaginados(atendimentos.slice(indiceInicial, indiceFinal));
+    setPaginaAtual(novaPagina);
   };
 
   const formatarData = (campoData) => {
@@ -169,6 +150,7 @@ export default function RelatorioConsumo() {
 
   const valoresValidos = Object.values(resumoPecasGastas);
   const valorMaximo = valoresValidos.length > 0 ? Math.max(...valoresValidos) : 1;
+  const totalPaginas = Math.ceil(atendimentos.length / ITENS_POR_PAGINA);
 
   return (
     <div className="p-8 space-y-8 bg-slate-50 min-h-screen print:bg-white print:p-0 print:space-y-0 print:m-0 id-container-relatorio-impressao">
@@ -241,7 +223,7 @@ export default function RelatorioConsumo() {
             <FileText className="text-blue-600" /> Relatório de Insumos Otimizado
           </h1>
           <p className="text-slate-500 font-medium text-sm">
-            Busca sob demanda com cálculo direto nos dados brutos para precisão absoluta de estoque.
+            Busca sob demanda com consolidação em memória para precisão absoluta de estoque.
           </p>
         </div>
         
@@ -294,7 +276,7 @@ export default function RelatorioConsumo() {
 
         <div className="flex justify-end pt-2">
           <button
-            onClick={() => buscarDados(false, false)}
+            onClick={buscarDados}
             disabled={carregando}
             className="bg-slate-900 text-white text-xs uppercase tracking-wider font-bold px-6 py-3 rounded-xl hover:bg-slate-800 flex items-center gap-2"
           >
@@ -308,7 +290,7 @@ export default function RelatorioConsumo() {
       {carregando ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2 print:hidden">
           <Loader2 size={32} className="animate-spin text-blue-600" />
-          <span className="text-xs font-bold uppercase tracking-widest">Processando lote do Firestore...</span>
+          <span className="text-xs font-bold uppercase tracking-widest">Processando base do Firestore...</span>
         </div>
       ) : atendimentos.length > 0 ? (
         <div className="space-y-6 print:space-y-6 w-full layout-impressao-isolado">
@@ -323,17 +305,17 @@ export default function RelatorioConsumo() {
                 </p>
               </div>
               <div className="text-right text-[10px] text-slate-500 font-mono">
-                <p className="font-bold text-slate-800">Lote (Página): {paginaAtual}</p>
+                <p className="font-bold text-slate-800">Página: {paginaAtual} de {totalPaginas}</p>
                 <p>Gerado em: {new Date().toLocaleDateString('pt-BR')}</p>
               </div>
             </div>
           </div>
 
-          {/* SEÇÃO DO GRÁFICO DE BARRAS SEPARADO POR MARCA */}
+          {/* GRÁFICO DE BARRAS CONSOLIDADO (Reflete o total dos filtros aplicados) */}
           <div className="w-full bg-white p-5 rounded-2xl border border-slate-200 shadow-sm print:border-slate-300 print:p-4 print:rounded-xl break-inside-avoid">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-4 flex items-center gap-1.5 border-b pb-1">
               <BarChart3 size={16} className="text-blue-600" /> 
-              Análise Visual de Consumo (Por Página)
+              Análise Global de Consumo do Período / Filtro
             </h3>
             <div className="space-y-3.5">
               {Object.entries(resumoPecasGastas).map(([nomePeca, qtd]) => {
@@ -370,7 +352,7 @@ export default function RelatorioConsumo() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 text-slate-700 font-medium">
-                {atendimentos.map((atendimento) => (
+                {atendimentosPaginados.map((atendimento) => (
                   <tr key={atendimento.id} className="hover:bg-slate-50/50 transition-colors print:break-inside-avoid">
                     <td className="p-3 pl-5 font-semibold text-slate-500 whitespace-nowrap print:p-2 print:pl-3 print:text-slate-900">
                       {formatarData(atendimento.data_finalizacao || atendimento.data_atendimento || atendimento.data_entrada)}
@@ -404,22 +386,22 @@ export default function RelatorioConsumo() {
             </table>
           </div>
 
-          {/* Controle de Paginação */}
+          {/* Controle de Paginação Limpo em Memória */}
           <div className="flex items-center justify-between border-t pt-4 print:hidden">
             <span className="text-xs text-slate-500 font-semibold">
-              Página <strong className="text-slate-800">{paginaAtual}</strong>
+              Página <strong className="text-slate-800">{paginaAtual}</strong> de <strong className="text-slate-800">{totalPaginas}</strong> ({atendimentos.length} itens encontrados)
             </span>
             <div className="flex gap-2">
               <button
-                onClick={() => buscarDados(false, true)}
+                onClick={() => mudarPagina(paginaAtual - 1)}
                 disabled={paginaAtual === 1}
                 className="flex items-center gap-1 px-3 py-2 bg-white border rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-all"
               >
                 <ChevronLeft size={16} /> Voltar
               </button>
               <button
-                onClick={() => buscarDados(true, false)}
-                disabled={!temMais}
+                onClick={() => mudarPagina(paginaAtual + 1)}
+                disabled={paginaAtual >= totalPaginas}
                 className="flex items-center gap-1 px-3 py-2 bg-white border rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-all"
               >
                 Avançar <ChevronRight size={16} />
