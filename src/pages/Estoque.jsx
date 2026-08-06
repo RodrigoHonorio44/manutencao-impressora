@@ -4,14 +4,14 @@ import { collection, addDoc, serverTimestamp, query, onSnapshot, doc, deleteDoc 
 import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2, Eye, X, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo mantido)
+// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo Atualizado com Fotos)
 const CATALOGO_IMPRESSORAS = {
   Brother: {
-    modelos: ["DCP-L5652DN", "MFC-L5702DN", "DCP-L5502DN", "HL-L5102DW"],
+    modelos: ["DCP-L2540DN", "DCP-L5652DN", "MFC-L5702DN", "DCP-L5502DN", "HL-L5102DW"],
     pecas: [
-      { nome: "Película de Fusão (Metálica/Alta Performance)", pn: "LY9012001", obs: "Compatível com série L5000/L6000 (Toner TN3472)" },
-      { nome: "Rolo Pressor do Fusor", pn: "LY9015001", obs: "Compatível com série L5000/L6000 (Toner TN3472)" },
-      { nome: "Bucha do Rolo Pressor (Par)", pn: "LY9011002", obs: "Usar junto com o Rolo Pressor LY9015001" },
+      { nome: "Rolo Pressor do Fusor", pn: "LY9015001 / L2540", obs: "Compatível com DCP-L2540DN e série L5000" },
+      { nome: "Película de Fusão (Metálica/Alta Performance)", pn: "LY9012001 / L2540", obs: "Compatível com DCP-L2540DN e série L5000" },
+      { nome: "Bucha do Rolo Pressor (Par)", pn: "LY9011002", obs: "Usar junto com o Rolo Pressor" },
       { nome: "Engrenagem do Fusor (31 dentes)", pn: "LY9013001", obs: "Engrenagem de tração do fusor" },
       { nome: "Lâmpada de Halogênio do Fusor (110v)", pn: "LM0134001", obs: "Resistência interna do fusor" },
       { nome: "Termistor da Unidade de Fusão", pn: "LT3211001", obs: "Sensor de temperatura do fusor" },
@@ -22,10 +22,25 @@ const CATALOGO_IMPRESSORAS = {
       { nome: "Placa Fonte de Alimentação (110v)", pn: "LT3524001", obs: "Placa de energia principal" },
       { nome: "Placa Lógica Principal", pn: "LT3412001", obs: "Placa de processamento" },
       { nome: "Painel Touchscreen / Placa do Painel", pn: "LT3102001", obs: "Tela frontal de comando" },
-      { nome: "Gaveta de Papel Completa (LT-5500)", pn: "LY9021001", obs: "Cassete de papel padrão de 250 folhas" },
+      { nome: "Gaveta de Papel Completa (LT-5500)", pn: "LY9021001", obs: "Cassete de papel padrão" },
       { nome: "Cabo Flat do Scanner / ADF", pn: "LY9033001", obs: "Fita de comunicação do escaner" },
       { nome: "Unidade de Cilindro (Drum DR3442)", pn: "DR3442", obs: "Fotocondutor de imagem (Rolo verde)" },
       { nome: "Rolo de Transferência (Banda de Transferência)", pn: "LY9019001", obs: "Fica abaixo do cilindro" }
+    ]
+  },
+  Epson: {
+    modelos: ["EcoTank L3250", "EcoTank L3150", "EcoTank M2170", "EcoTank M2140", "EcoTank L6171", "Expression Home XP-4100", "WorkForce WF-2830"],
+    pecas: [
+      { 
+        nome: "Caixa de Resíduo de Tinta C9344 / EWMB3", 
+        pn: "C9344 / EWMB3", 
+        obs: "Compatível com Expression Home XP-3100 / XP-4100 / XP-4101 / XP-4105, WorkForce WF-2810DWF / WF-2830DWF / WF-2850DWF / WF-2830 / WF-2850 / WF-2851 / EW-452A e EcoTank L3250 / L3210 / L3150 / L3110 / L5290" 
+      },
+      { 
+        nome: "Caixa de Resíduo de Tinta E-04D1 / EWMB2", 
+        pn: "E-04D1 / EWMB2", 
+        obs: "Compatível com WorkForce WF-2860 / WF-2860DWF / WF-2865DWF / WF-2861, Expression Home XP-5105 / XP-5100, EcoTank ET-M3180 / ET-M3170 / ET-M3140 / ET-M2170 / ET-M2140 / ET-M1180 / ET-M1170 / ET-M1140 / ET-4750 / ET-3750 / ET-3700 / ET-2760 / ET-3710 / ET-4760 / ET-3760 / ST-M1000 / ST-M3000 / ST-4000 / ST-3000 / L6190 / M1180 / M2170 / M3180 / L6168 / L6178 / L6198 / L6171" 
+      }
     ]
   },
   HP: {
@@ -219,10 +234,9 @@ export default function Estoque() {
     }
 
     const loading = toast.loading("Registrando no estoque...");
-    const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} - (Part Number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
+    const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} - (part number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
 
     try {
-      // NORMALIZAÇÃO PARA MINÚSCULAS: Salvando dados estruturados de forma limpa e padronizada
       await addDoc(collection(db, "estoque_pecas"), {
         marca: marcaSelecionada.trim().toLowerCase(),
         modelo: modeloSelecionada.trim().toLowerCase(),
@@ -295,14 +309,13 @@ export default function Estoque() {
           </div>
 
           <div className="flex flex-col space-y-1.5 md:col-span-2">
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno</label>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Componente Interno / Insumo</label>
             <select value={pecaObjetoSelecionado ? JSON.stringify(pecaObjetoSelecionado) : ''} onChange={(e) => setPecaObjetoSelecionado(e.target.value ? JSON.parse(e.target.value) : null)} disabled={!modeloSelecionada} className="p-3 bg-slate-50 border rounded-xl text-sm font-medium text-slate-700 disabled:opacity-50 outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">Selecione a peça...</option>
               {marcaSelecionada && CATALOGO_IMPRESSORAS[marcaSelecionada].pecas.map((p, index) => <option key={index} value={JSON.stringify(p)}>{p.nome} (PN: {p.pn})</option>)}
             </select>
           </div>
 
-          {/* Grid de quantidade e botão responsivo */}
           <div className="grid grid-cols-3 gap-3 md:col-span-1">
             <div className="col-span-1 flex flex-col space-y-1.5">
               <label className="text-xs font-bold text-slate-500 uppercase text-center tracking-wide">Qtd</label>
@@ -315,7 +328,7 @@ export default function Estoque() {
         </form>
       </section>
 
-      {/* Menu de Filtro e Barra de Busca Responsiva */}
+      {/* Menu de Filtro e Barra de Busca */}
       <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
         <div className="flex bg-slate-200/60 p-1 rounded-xl border border-slate-300/40 shrink-0">
           <button onClick={() => setVerFiltroStatus('disponivel')} className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs uppercase transition-all ${verFiltroStatus === 'disponivel' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>
@@ -333,7 +346,7 @@ export default function Estoque() {
         </div>
       </div>
 
-      {/* Tabela de Visualização com Scroll Horizontal para Mobile */}
+      {/* Tabela de Visualização */}
       <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-4 md:p-5 bg-slate-50 border-b flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -409,11 +422,10 @@ export default function Estoque() {
         </div>
       </section>
 
-      {/* MODAL DE RASTREABILIDADE TOTALMENTE RESPONSIVO */}
+      {/* Modal de Rastreabilidade */}
       {itemSelecionadoRastrear && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[110] p-3 md:p-4">
-          <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-150">
-            {/* Header Modal */}
+          <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-4 md:p-5 bg-slate-50 border-b flex justify-between items-center shrink-0">
               <div className="max-w-[85%]">
                 <span className="text-[9px] md:text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso Real em Atendimentos</span>
@@ -424,7 +436,6 @@ export default function Estoque() {
               </button>
             </div>
 
-            {/* Conteúdo Modal com Rolagem Lateral e Vertical Interna */}
             <div className="p-4 md:p-6 space-y-4 overflow-y-auto flex-1">
               <p className="text-[11px] md:text-xs text-slate-500 font-medium">Buscando correspondências internas na lista de peças aplicadas dos chamados:</p>
               
@@ -480,7 +491,6 @@ export default function Estoque() {
               )}
             </div>
 
-            {/* Footer Modal */}
             <div className="p-4 bg-slate-50 border-t flex justify-end shrink-0">
               <button onClick={() => setItemSelecionadoRastrear(null)} className="w-full sm:w-auto px-5 py-2.5 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider active:bg-slate-300 transition-all">
                 Fechar Janela
