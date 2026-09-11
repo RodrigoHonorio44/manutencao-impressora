@@ -14,38 +14,54 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   useEffect(() => {
     const buscarDados = async () => {
       try {
-        // Busca o histórico sem exigir índice composto no Firestore (filtro e ordenação em memória)
         if (chamado?.serial) {
-          const serialLimpo = chamado.serial.toLowerCase().trim();
+          const serialLimpo = String(chamado.serial).toLowerCase().trim();
           const qHistorico = query(
             collection(db, "atendimentos"),
             where("serial_lc", "==", serialLimpo)
           );
           
           const snapHist = await getDocs(qHistorico);
+          const statusConcluidos = ['finalizado', 'faturado', 'entregue'];
+
           const docsHist = snapHist.docs
-            .map(d => d.data())
-            .filter(d => d.status === 'Finalizado' && d.contador_final && d.os !== chamado.os);
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(d => {
+              const statusValido = statusConcluidos.includes((d.status || '').toLowerCase().trim());
+              const temContador = d.contador_final !== undefined && d.contador_final !== null && d.contador_final !== '';
+              const ehOutraOS = String(d.os).trim() !== String(chamado.os).trim();
+
+              return statusValido && temContador && ehOutraOS;
+            });
           
-          // Ordena pelo histórico mais recente em JS
+          // Ordena garantindo conversão correta de Timestamp do Firestore ou Date
           docsHist.sort((a, b) => {
-            const dataA = a.data_finalizacao?.toDate ? a.data_finalizacao.toDate() : new Date(a.data_finalizacao || 0);
-            const dataB = b.data_finalizacao?.toDate ? b.data_finalizacao.toDate() : new Date(b.data_finalizacao || 0);
+            const getMillis = (data) => {
+              if (!data) return 0;
+              if (typeof data.toMillis === 'function') return data.toMillis();
+              if (typeof data.toDate === 'function') return data.toDate().getTime();
+              return new Date(data).getTime() || 0;
+            };
+
+            const dataA = getMillis(a.data_finalizacao) || getMillis(a.data_entrada);
+            const dataB = getMillis(b.data_finalizacao) || getMillis(b.data_entrada);
+
             return dataB - dataA;
           });
 
           if (docsHist.length > 0) {
-            setUltimoContador(docsHist[0].contador_final);
+            setUltimoContador(Number(docsHist[0].contador_final));
+          } else {
+            setUltimoContador(null);
           }
         }
 
-        // --- CÓDIGO ORIGINAL DE BUSCA DE PEÇAS ---
+        // --- BUSCA DE PEÇAS NO ESTOQUE ---
         const querySnapshot = await getDocs(collection(db, "estoque_pecas"));
         const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
         const marcaOs = (chamado.marca || '').toLowerCase().trim();
         const modeloOs = (chamado.modelo || '').toLowerCase().trim();
-        
         const modeloLimpo = modeloOs.replace(/[\(\)]/g, ' ');
         const termosModelo = modeloLimpo.split(/[^a-zA-Z0-9]/).filter(t => t.length >= 3);
 
@@ -103,8 +119,8 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
         
         setPecasEstoque(filtradas);
       } catch (error) {
-        console.error("Erro ao buscar peças:", error);
-        toast.error("Erro ao carregar peças compatíveis.");
+        console.error("Erro ao buscar dados:", error);
+        toast.error("Erro ao carregar peças ou histórico.");
       }
     };
 
@@ -113,8 +129,11 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     }
   }, [chamado]);
 
-  const paginasRodadas = (contadorFinal && ultimoContador && Number(contadorFinal) >= ultimoContador)
-    ? Number(contadorFinal) - ultimoContador
+  const numContadorFinal = Number(contadorFinal);
+  const numUltimoContador = Number(ultimoContador);
+
+  const paginasRodadas = (contadorFinal && ultimoContador !== null && numContadorFinal >= numUltimoContador)
+    ? numContadorFinal - numUltimoContador
     : 0;
 
   const adicionarPeca = async (peca) => {
@@ -194,18 +213,18 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     if(!relatorio) return toast.error("Descreva o serviço realizado antes de finalizar!");
     if(!contadorFinal) return toast.error("Informe o contador final de páginas da impressora!");
     
-    if (ultimoContador && Number(contadorFinal) < ultimoContador) {
+    if (ultimoContador !== null && numContadorFinal < numUltimoContador) {
       return toast.error(`O contador atual (${contadorFinal}) não pode ser menor que o anterior (${ultimoContador})!`);
     }
 
     const loading = toast.loading("Finalizando...");
     try {
       await updateDoc(doc(db, "atendimentos", chamado.id), {
-        status: 'Finalizado',
+        status: chamado.status === 'Faturado' ? 'Faturado' : 'Finalizado',
         relatorio_tecnico: relatorio,
-        contador_final: Number(contadorFinal),
-        ultimo_contador_anterior: ultimoContador || null,
-        paginas_rodadas: paginasRodadas,
+        contador_final: numContadorFinal,
+        ultimo_contador_anterior: ultimoContador !== null ? numUltimoContador : null,
+        paginas_rodadas: Number(paginasRodadas),
         serial_lc: (chamado.serial || '').toLowerCase().trim(),
         data_finalizacao: serverTimestamp()
       });
