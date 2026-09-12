@@ -13,15 +13,29 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
     return acc;
   }, {});
 
-  // Formata datas para o padrão DD/MM/AAAA
-  const formatarData = (dataString) => {
-    if (!dataString) return '-';
+  // Formata datas para o padrão DD/MM/AAAA tratando também Timestamps do Firebase
+  const formatarData = (data) => {
+    if (!data) return '-';
+    
     try {
-      const data = new Date(dataString);
-      if (isNaN(data.getTime())) return dataString;
-      return data.toLocaleDateString('pt-BR');
+      let dataObj;
+
+      // Se for um Timestamp do Firebase (possui métodos toDate ou toMillis, ou atributo seconds)
+      if (typeof data.toDate === 'function') {
+        dataObj = data.toDate();
+      } else if (typeof data.toMillis === 'function') {
+        dataObj = new Date(data.toMillis());
+      } else if (data?.seconds !== undefined) {
+        dataObj = new Date(data.seconds * 1000);
+      } else {
+        dataObj = new Date(data);
+      }
+
+      if (isNaN(dataObj.getTime())) return '-';
+
+      return dataObj.toLocaleDateString('pt-BR');
     } catch {
-      return dataString;
+      return '-';
     }
   };
 
@@ -150,6 +164,7 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
                   <tbody className="divide-y divide-slate-200">
                     {chamados.map((item, index) => {
                       const dataFechamento = 
+                        item.data_finalizacao ||
                         item.data_fim || 
                         item.data_fechamento || 
                         item.data_fim_manutencao || 
