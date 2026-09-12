@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import { collection, getDocs, query, where, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
-import { X, Package, Clock, CheckCircle, FileText, Gauge, History } from 'lucide-react';
+import { X, Package, Clock, CheckCircle, FileText, Gauge, History, Plus } from 'lucide-react';
 
 export default function ModalGerenciarOS({ chamado, onClose }) {
   const [pecasEstoque, setPecasEstoque] = useState([]);
+  const [pecaAvulsa, setPecaAvulsa] = useState('');
   const [pendencia, setPendencia] = useState(chamado.peca_pendente || '');
   const [relatorio, setRelatorio] = useState(chamado.relatorio_tecnico || '');
   const [contadorFinal, setContadorFinal] = useState(chamado.contador_final || '');
@@ -34,7 +35,6 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
               return statusValido && temContador && ehOutraOS;
             });
           
-          // Ordena garantindo conversão correta de Timestamp do Firestore ou Date
           docsHist.sort((a, b) => {
             const getMillis = (data) => {
               if (!data) return 0;
@@ -56,7 +56,6 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           }
         }
 
-        // --- BUSCA DE PEÇAS NO ESTOQUE ---
         const querySnapshot = await getDocs(collection(db, "estoque_pecas"));
         const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         
@@ -167,14 +166,15 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           transaction.update(pecaRef, { qtd: novaQtd });
         }
         
+        const nomeFormatado = (peca.nome || '').toLowerCase().trim();
         const novoRelatorio = relatorio
-          ? `${relatorio}, trocado ${peca.nome}`
-          : `Efetuada a troca de: ${peca.nome}`;
+          ? `${relatorio}, trocado ${nomeFormatado}`
+          : `Efetuada a troca de: ${nomeFormatado}`;
         
         setRelatorio(novoRelatorio);
 
         transaction.update(chamadoRef, {
-          pecas_utilizadas: arrayUnion(peca.nome),
+          pecas_utilizadas: arrayUnion(nomeFormatado),
           relatorio_tecnico: novoRelatorio,
           status: 'Em Manutenção'
         });
@@ -193,6 +193,33 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     } catch (e) {
       console.error(e);
       toast.error("Erro na transação ou estoque desatualizado.", { id: loading });
+    }
+  };
+
+  const adicionarPecaAvulsa = async () => {
+    if (!pecaAvulsa.trim()) return toast.error("Digite o nome da peça!");
+    const loading = toast.loading("Registrando peça...");
+
+    const nomeFormatado = pecaAvulsa.toLowerCase().trim();
+    const chamadoRef = doc(db, "atendimentos", chamado.id);
+
+    try {
+      const novoRelatorio = relatorio
+        ? `${relatorio}, trocado ${nomeFormatado}`
+        : `Efetuada a troca de: ${nomeFormatado}`;
+
+      await updateDoc(chamadoRef, {
+        pecas_utilizadas: arrayUnion(nomeFormatado),
+        relatorio_tecnico: novoRelatorio,
+        status: 'Em Manutenção'
+      });
+
+      setRelatorio(novoRelatorio);
+      setPecaAvulsa('');
+      toast.success("Peça adicionada à OS!", { id: loading });
+    } catch (e) {
+      console.error(e);
+      toast.error("Erro ao registrar peça.", { id: loading });
     }
   };
 
@@ -250,22 +277,44 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
         <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-3 gap-6 overflow-y-auto md:overflow-visible">
           
           {/* Coluna 1: Peças */}
-          <div className="space-y-3">
-            <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><Package size={14}/> Estoque Disponível</h3>
-            <div className="space-y-2 max-h-44 md:max-h-64 overflow-y-auto pr-1">
-              {pecasEstoque.map(peca => (
+          <div className="space-y-4">
+            <div>
+              <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest mb-2"><Package size={14}/> Estoque Disponível</h3>
+              <div className="space-y-2 max-h-36 md:max-h-48 overflow-y-auto pr-1">
+                {pecasEstoque.map(peca => (
+                  <button
+                    key={peca.id}
+                    onClick={() => adicionarPeca(peca)}
+                    className="w-full p-3 text-left border rounded-xl hover:border-blue-500 active:bg-blue-100 md:hover:bg-blue-50 transition-all flex justify-between items-center group"
+                  >
+                    <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700 break-words max-w-[80%]">{peca.nome}</span>
+                    <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500 shrink-0">{peca.qtd}</span>
+                  </button>
+                ))}
+                {pecasEstoque.length === 0 && (
+                  <p className="text-xs text-slate-400 italic py-2">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Input de Peça Avulsa / Manual */}
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest"><Plus size={14}/> Peça Manual / Avulsa</h3>
+              <div className="flex gap-1.5">
+                <input
+                  value={pecaAvulsa}
+                  onChange={(e) => setPecaAvulsa(e.target.value)}
+                  placeholder="Nome da peça utilizada"
+                  className="w-full p-2.5 border rounded-xl outline-none text-xs bg-slate-50 font-medium focus:ring-2 focus:ring-blue-500"
+                />
                 <button
-                  key={peca.id}
-                  onClick={() => adicionarPeca(peca)}
-                  className="w-full p-3 text-left border rounded-xl hover:border-blue-500 active:bg-blue-100 md:hover:bg-blue-50 transition-all flex justify-between items-center group"
+                  onClick={adicionarPecaAvulsa}
+                  className="bg-blue-600 text-white p-2.5 rounded-xl hover:bg-blue-700 active:bg-blue-800 transition-all shrink-0 flex items-center justify-center"
+                  title="Adicionar Peça"
                 >
-                  <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700 break-words max-w-[80%]">{peca.nome}</span>
-                  <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500 shrink-0">{peca.qtd}</span>
+                  <Plus size={16} />
                 </button>
-              ))}
-              {pecasEstoque.length === 0 && (
-                <p className="text-xs text-slate-400 italic py-2">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
-              )}
+              </div>
             </div>
           </div>
 
