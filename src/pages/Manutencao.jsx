@@ -5,15 +5,18 @@ import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCir
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
 
-// 🌟 LISTA DE CLIENTES/UNIDADES PADRONIZADOS
+// LISTA DE CLIENTES/UNIDADES PADRONIZADOS
 const CLIENTES_DISPONIVEIS = [
-  { id: "conde modesto leal", nomeExibicao: "Conde Modesto Leal" }
+  { id: "conde modesto leal", nomeExibicao: "Conde Modesto Leal" },
+  { id: "upa inoa", nomeExibicao: "Upa Inoã" },
+  { id: "upa santa rita", nomeExibicao: "Upa Santa Rita" },
+  { id: "secretaria de saude", nomeExibicao: "Secretaria de Saúde" }
 ];
 
 const MODELOS_DISPONIVEIS = {
-  "Brother": ["HL-L5102DW","HL-L6202DW","DCP-L2540DN", "DCP-L5652DN","DCP-L5602DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
-  "Epson": [" Ecotank L5590"," Ecotank L4260",],
-  "HP (Laser 408 / MFP 432)": ["Laser 408dn", "Laser MFP 432fdn"],
+  "Brother": ["HL-L5102DW", "HL-L6202DW", "DCP-L2540DN", "DCP-L5652DN", "DCP-L5602DN", "MFC-L5702DW", "MFC-L5902DW", "Outro Modelo Brother"],
+  "Epson": ["Ecotank L5590", "Ecotank L4260"],
+  "HP Laser":["408dn","MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
   "Pantum": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Pantum"],
   "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
@@ -59,7 +62,7 @@ export default function Manutencao() {
         return;
       }
 
-    try {
+      try {
         const q = query(
           collection(db, "atendimentos"),
           where("serial", "==", form.serial.trim().toLowerCase())
@@ -143,8 +146,6 @@ export default function Manutencao() {
         </div>
         
         <form onSubmit={handleEntrada} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          
-          {/* 🌟 ALTERADO DE INPUT PARA SELECT COM A OPÇÃO CONDE MODESTO LEAL */}
           <select
             value={form.cliente}
             onChange={(e) => setForm({...form, cliente: e.target.value})}
