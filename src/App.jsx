@@ -8,16 +8,16 @@ import NotasServico from './pages/NotasServico';
 import Historico from './pages/Historico'; 
 import Manuais from './pages/Manuais'; 
 import Financas from './pages/Financas'; 
-import RelatorioConsumo from './pages/RelatorioConsumo'; // 🟢 IMPORTADA A NOVA TELA DE RELATÓRIO DE CONSUMO AQUI
+import RelatorioConsumo from './pages/RelatorioConsumo';
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Componente de Layout para não repetir Sidebar e Main em todas as rotas protegidas
+// 🟢 LAYOUT CORRIGIDO PARA RESPONSIVIDADE (Mobile e Desktop)
 const DashboardLayout = ({ children }) => (
   <ProtectedRoute>
-    <div className="flex">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
       <Sidebar />
-      <main className="flex-1 ml-64 min-h-screen bg-slate-50">
+      <main className="flex-1 md:ml-64 min-h-screen bg-slate-50 w-full overflow-x-hidden">
         {children}
       </main>
     </div>
@@ -39,7 +39,7 @@ function App() {
         <Route path="/estoque" element={<DashboardLayout><Estoque /></DashboardLayout>} />
         <Route path="/notas" element={<DashboardLayout><NotasServico /></DashboardLayout>} />
         <Route path="/financas" element={<DashboardLayout><Financas /></DashboardLayout>} />
-        <Route path="/relatorios" element={<DashboardLayout><RelatorioConsumo /></DashboardLayout>} /> {/* 🟢 NOVA ROTA ADICIONADA PARA O RELATÓRIO */}
+        <Route path="/relatorios" element={<DashboardLayout><RelatorioConsumo /></DashboardLayout>} />
         <Route path="/historico" element={<DashboardLayout><Historico /></DashboardLayout>} />
         <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} />
 

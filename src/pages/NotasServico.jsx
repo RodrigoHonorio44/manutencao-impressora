@@ -8,16 +8,16 @@ export default function NotasServico() {
   const [finalizadas, setFinalizadas] = useState([]);
   const [selecionadas, setSelecionadas] = useState([]);
   
-  // Estados do Histórico e Paginação Corrigidos
+  // Estados do Histórico e Paginação
   const [historico, setHistorico] = useState([]);
-  const [primeiroDoc, setPrimeiroDoc] = useState(null); // Guarda o primeiro da página atual
-  const [ultimoDoc, setUltimoDoc] = useState(null);     // Guarda o último da página atual
-  const [pontesDePaginas, setPontesDePaginas] = useState([]); // Armazena o 'primeiroDoc' de cada página visitada
+  const [primeiroDoc, setPrimeiroDoc] = useState(null);
+  const [ultimoDoc, setUltimoDoc] = useState(null);
+  const [pontesDePaginas, setPontesDePaginas] = useState([]);
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [temMais, setTemMais] = useState(false);
   
   const [abaAtiva, setAbaAtiva] = useState('pendentes');
-  const [statusFiltroHistorico, setStatusFiltroHistorico] = useState('gerado'); // 'gerado' (A Faturar) ou 'faturado' (Pagas)
+  const [statusFiltroHistorico, setStatusFiltroHistorico] = useState('gerado');
   const ITENS_POR_PAGINA = 10;
 
   // 1. Monitora atendimentos prontos em tempo real
@@ -66,7 +66,7 @@ export default function NotasServico() {
       setHistorico(docsVisualizar.map(doc => ({ id: doc.id, ...doc.data() })));
       setPrimeiroDoc(docsVisualizar[0]);
       setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
-      setPontesDePaginas([docsVisualizar[0]]); // Inicializa a árvore de páginas com a primeira
+      setPontesDePaginas([docsVisualizar[0]]);
       setPaginaAtual(1);
       setTemMais(temProxima);
     } catch (error) {
@@ -99,7 +99,6 @@ export default function NotasServico() {
       setPrimeiroDoc(docsVisualizar[0]);
       setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
       
-      // Adiciona o primeiro doc desta nova página na árvore de navegação
       setPontesDePaginas(prev => [...prev, docsVisualizar[0]]);
       setPaginaAtual(prev => prev + 1);
       setTemMais(temProxima);
@@ -112,34 +111,12 @@ export default function NotasServico() {
     if (paginaAtual === 1) return;
 
     try {
-      // Pega o snapshot do primeiro documento da página anterior
       const docAlvo = pontesDePaginas[paginaAtual - 2];
 
-      const q = query(
-        collection(db, "historico_notas"),
-        where("status", "==", statusFiltroHistorico),
-        orderBy("data_fechamento", "desc"),
-        startAfter(docAlvo), // Começa imediatamente após o início da página anterior
-        limit(ITENS_POR_PAGINA)
-      );
-
-      // No entanto, para incluir o próprio 'docAlvo' de volta na visualização de forma limpa, 
-      // reconstruímos a query usando startAt em vez de startAfter.
-      const qVoltar = query(
-        collection(db, "historico_notas"),
-        where("status", "==", statusFiltroHistorico),
-        orderBy("data_fechamento", "desc"),
-        // Usamos o startAt apontando direto para o início da página que queremos retornar
-        limit(ITENS_POR_PAGINA)
-      );
-      
-      // Para evitar repetição complexa de query invertida, o padrão ideal do SDK web é 
-      // disparar a query partindo exatamente do ponteiro armazenado da página anterior:
       const qRefatorada = query(
         collection(db, "historico_notas"),
         where("status", "==", statusFiltroHistorico),
         orderBy("data_fechamento", "desc"),
-        // Iniciamos exatamente no primeiro documento guardado daquela página
         ...[docAlvo ? require('firebase/firestore').startAt(docAlvo) : null].filter(Boolean),
         limit(ITENS_POR_PAGINA)
       );
@@ -151,10 +128,9 @@ export default function NotasServico() {
       setPrimeiroDoc(docs[0]);
       setUltimoDoc(docs[docs.length - 1]);
       
-      // Remove o último ponteiro do histórico de páginas
       setPontesDePaginas(prev => prev.slice(0, -1));
       setPaginaAtual(prev => prev - 1);
-      setTemMais(true); // Se estamos voltando, com certeza tem uma próxima página (a que estávamos)
+      setTemMais(true);
     } catch (error) {
       console.error("Erro ao voltar página:", error);
     }
@@ -174,7 +150,6 @@ export default function NotasServico() {
     }
   };
 
-  // Executa a impressão HTML
   const ejecutarImpressaoHTML = (itens, total, dataNota, statusNota) => {
     const win = window.open('', 'PRINT', 'height=750,width=900,top=100,left=100,toolbar=no,navigator=no,status=no');
     if (!win) {
@@ -275,7 +250,7 @@ export default function NotasServico() {
                 ${itens.map(item => `
                   <tr>
                     <td>
-                      <div class="eq-name">${item.marca} ${item.modelo}</div>
+                      <div class="eq-name">${item.marca}${item.modelo}</div>
                       <div class="eq-serial">S/N: ${item.serial || 'Não informado'}</div>
                     </td>
                     <td><div style="font-weight: 600; color: #475569;">${item.cliente}</div></td>
@@ -330,8 +305,16 @@ export default function NotasServico() {
     const itens = finalizadas.filter(f => selecionadas.includes(f.id));
     if (itens.length === 0) return toast.error("Selecione ao menos um serviço!");
 
-    const loading = toast.loading("Salvando nota e atualizando atendimentos...");
     const total = itens.length * 70;
+
+    // Confirmação para evitar geração por clique acidental
+    const confirmou = window.confirm(
+      `Deseja gerar a nota de serviço no valor total de R$ ${total.toFixed(2)} referente a ${itens.length} ordem(ns) selecionada(s)?`
+    );
+
+    if (!confirmou) return;
+
+    const loading = toast.loading("Salvando nota e atualizando atendimentos...");
     const dataAtualString = new Date().toLocaleDateString('pt-BR');
 
     try {
@@ -388,22 +371,23 @@ export default function NotasServico() {
   };
 
   return (
-    <div className="p-8 space-y-6">
-      <header className="flex justify-between items-center bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+    <div className="p-4 sm:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+      {/* HEADER RESPONSIVO */}
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 md:p-6 rounded-3xl border border-slate-200 shadow-sm">
         <div>
-          <h1 className="text-2xl font-black text-slate-800">Notas de Serviço</h1>
-          <p className="text-slate-500 font-medium">Controle de faturamentos ativos e histórico de consultas.</p>
+          <h1 className="text-xl md:text-2xl font-black text-slate-800">Notas de Serviço</h1>
+          <p className="text-sm text-slate-500 font-medium">Controle de faturamentos ativos e histórico de consultas.</p>
         </div>
         
         {abaAtiva === 'pendentes' && (
-          <div className="flex items-center gap-6">
-            <div className="text-right">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
+            <div className="text-left sm:text-right">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Geral</p>
               <p className="text-2xl font-black text-emerald-600">R$ {(selecionadas.length * 70).toFixed(2)}</p>
             </div>
             <button 
               onClick={gerarNotaEGuardarNoHistorico}
-              className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-xs tracking-wider"
+              className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 uppercase text-xs tracking-wider w-full sm:w-auto"
             >
               <ReceiptText size={18}/> GERAR E SALVAR NOTA
             </button>
@@ -411,17 +395,17 @@ export default function NotasServico() {
         )}
       </header>
 
-      {/* ABAS DO TOPO */}
-      <div className="flex border-b border-slate-200 gap-4">
+      {/* ABAS DO TOPO COM ROLAGEM HORIZONTAL NO MOBILE */}
+      <div className="flex border-b border-slate-200 gap-4 overflow-x-auto pb-1 scrollbar-none">
         <button 
           onClick={() => setAbaAtiva('pendentes')}
-          className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 px-2 transition-all flex items-center gap-2 ${abaAtiva === 'pendentes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+          className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 px-2 transition-all flex items-center gap-2 whitespace-nowrap ${abaAtiva === 'pendentes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
         >
           <ReceiptText size={16} /> OS Prontas para Nota ({finalizadas.length})
         </button>
         <button 
           onClick={() => setAbaAtiva('historico')}
-          className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 px-2 transition-all flex items-center gap-2 ${abaAtiva === 'historico' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+          className={`pb-3 text-xs font-black uppercase tracking-wider border-b-2 px-2 transition-all flex items-center gap-2 whitespace-nowrap ${abaAtiva === 'historico' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
         >
           <History size={16} /> Consultar Notas Guardadas
         </button>
@@ -430,53 +414,55 @@ export default function NotasServico() {
       {/* ABA 1: OS PENDENTES */}
       {abaAtiva === 'pendentes' && (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
-              <tr>
-                <th className="p-5 w-10 text-center">
-                  <div 
-                    onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
-                    className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${finalizadas.length > 0 && selecionadas.length === finalizadas.length ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
-                  >
-                    {finalizadas.length > 0 && selecionadas.length === finalizadas.length && <CheckCircle2 size={16} className="text-white" />}
-                  </div>
-                </th>
-                <th className="p-5">Equipamento / Origem</th>
-                <th className="p-5">Peças / Serviços</th>
-                <th className="p-5 text-right">Valor</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {finalizadas.map(item => (
-                <tr 
-                  key={item.id} 
-                  onClick={() => toggleSelecao(item.id)}
-                  className={`cursor-pointer transition-all ${selecionadas.includes(item.id) ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
-                >
-                  <td className="p-5">
-                    <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${selecionadas.includes(item.id) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                      {selecionadas.includes(item.id) && <CheckCircle2 size={16} className="text-white" />}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[600px]">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                <tr>
+                  <th className="p-4 md:p-5 w-10 text-center">
+                    <div 
+                      onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
+                      className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${finalizadas.length > 0 && selecionadas.length === finalizadas.length ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
+                    >
+                      {finalizadas.length > 0 && selecionadas.length === finalizadas.length && <CheckCircle2 size={16} className="text-white" />}
                     </div>
-                  </td>
-                  <td className="p-5">
-                    <p className="font-bold text-slate-800">{item.marca} {item.modelo}</p>
-                    <p className="text-xs text-slate-400">S/N: {item.serial} | <span className="text-blue-600 font-bold">{item.cliente}</span></p>
-                  </td>
-                  <td className="p-5">
-                    <div className="flex flex-wrap gap-1">
-                      {item.pecas_utilizadas?.length > 0 ? item.pecas_utilizadas.map((p, i) => (
-                        <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">{p}</span>
-                      )) : <span className="text-[10px] text-slate-400 italic font-medium">Ajuste técnico</span>}
-                    </div>
-                  </td>
-                  <td className="p-5 text-right font-black text-slate-700">R$ 70,00</td>
+                  </th>
+                  <th className="p-4 md:p-5">Equipamento / Origem</th>
+                  <th className="p-4 md:p-5">Peças / Serviços</th>
+                  <th className="p-4 md:p-5 text-right">Valor</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {finalizadas.map(item => (
+                  <tr 
+                    key={item.id} 
+                    onClick={() => toggleSelecao(item.id)}
+                    className={`cursor-pointer transition-all ${selecionadas.includes(item.id) ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
+                  >
+                    <td className="p-4 md:p-5">
+                      <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${selecionadas.includes(item.id) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                        {selecionadas.includes(item.id) && <CheckCircle2 size={16} className="text-white" />}
+                      </div>
+                    </td>
+                    <td className="p-4 md:p-5">
+                      <p className="font-bold text-slate-800">{item.marca} {item.modelo}</p>
+                      <p className="text-xs text-slate-400">S/N: {item.serial} | <span className="text-blue-600 font-bold">{item.cliente}</span></p>
+                    </td>
+                    <td className="p-4 md:p-5">
+                      <div className="flex flex-wrap gap-1">
+                        {item.pecas_utilizadas?.length > 0 ? item.pecas_utilizadas.map((p, i) => (
+                          <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">{p}</span>
+                        )) : <span className="text-[10px] text-slate-400 italic font-medium">Ajuste técnico</span>}
+                      </div>
+                    </td>
+                    <td className="p-4 md:p-5 text-right font-black text-slate-700 whitespace-nowrap">R$ 70,00</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           
           {finalizadas.length === 0 && (
-            <div className="p-20 text-center">
+            <div className="p-12 md:p-20 text-center">
               <ReceiptText size={48} className="mx-auto text-slate-200 mb-2" />
               <p className="text-slate-400 font-medium">Nenhuma OS pronta para faturamento.</p>
             </div>
@@ -487,25 +473,25 @@ export default function NotasServico() {
       {/* ABA 2: HISTÓRICO */}
       {abaAtiva === 'historico' && (
         <div className="space-y-4">
-          <div className="flex gap-2 bg-slate-100 p-1.5 rounded-2xl w-fit">
+          <div className="flex flex-wrap gap-2 bg-slate-100 p-1.5 rounded-2xl w-full sm:w-fit">
             <button
               onClick={() => setStatusFiltroHistorico('gerado')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'gerado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'gerado' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               <FileText size={14} /> Notas a Faturar
             </button>
             <button
               onClick={() => setStatusFiltroHistorico('faturado')}
-              className={`flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'faturado' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all ${statusFiltroHistorico === 'faturado' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
               <CheckCircle2 size={14} /> Histórico de Notas Pagas
             </button>
           </div>
 
           {historico.map((nota) => (
-            <div key={nota.id} className="bg-white p-5 rounded-2xl border border-slate-200 flex justify-between items-center hover:shadow-sm transition-all">
-              <div className="space-y-2 flex-1">
-                <div className="flex flex-wrap items-center gap-3">
+            <div key={nota.id} className="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition-all">
+              <div className="space-y-2 flex-1 w-full">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                   <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-md text-white uppercase ${nota.status === 'faturado' ? 'bg-emerald-600' : 'bg-amber-500'}`}>
                     <Calendar size={12} /> {nota.status === 'faturado' ? 'Liquidada' : 'Aguardando Pagamento'} ({nota.data_extenso})
                   </span>
@@ -519,7 +505,7 @@ export default function NotasServico() {
                 
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
                   {nota.servicos?.map((s, idx) => (
-                    <div key={idx} className="text-xs text-slate-600 flex justify-between">
+                    <div key={idx} className="text-xs text-slate-600 flex flex-col sm:flex-row justify-between gap-1 sm:gap-0">
                       <span>• <strong className="text-slate-800">{s.marca} {s.modelo}</strong> ({s.cliente}) — S/N: {s.serial}</span>
                       <span className="text-[10px] font-mono text-slate-400 uppercase">
                         {s.pecas_utilizadas?.length > 0 ? s.pecas_utilizadas.join(', ') : 'Preventiva'}
@@ -529,9 +515,11 @@ export default function NotasServico() {
                 </div>
               </div>
 
-              <div className="flex flex-col items-end gap-2 ml-6 min-w-[170px]">
-                <p className="text-xs font-black text-slate-400 uppercase tracking-wider">Valor do Lote</p>
-                <p className="text-xl font-black text-slate-800">R$ {nota.valor_total?.toFixed(2)}</p>
+              <div className="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 min-w-[170px]">
+                <div className="text-left md:text-right">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Valor do Lote</p>
+                  <p className="text-lg md:text-xl font-black text-slate-800">R$ {nota.valor_total?.toFixed(2)}</p>
+                </div>
                 
                 <div className="flex gap-2">
                   {nota.status !== 'faturado' && (
@@ -557,22 +545,22 @@ export default function NotasServico() {
 
           {/* BARRA DE PAGINAÇÃO */}
           {historico.length > 0 && (
-            <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mt-4">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mt-4">
               <span className="text-xs font-bold text-slate-500">
                 Página <span className="text-slate-800 font-black">{paginaAtual}</span>
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
                 <button
                   onClick={paginaAnterior}
                   disabled={paginaAtual === 1}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual === 1 ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual === 1 ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
                 >
                   <ChevronLeft size={16} /> Anterior
                 </button>
                 <button
                   onClick={proximaPagina}
                   disabled={!temMais}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${!temMais ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${!temMais ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
                 >
                   Próxima <ChevronRight size={16} />
                 </button>
@@ -581,9 +569,9 @@ export default function NotasServico() {
           )}
 
           {historico.length === 0 && (
-            <div className="p-20 text-center bg-white rounded-3xl border border-slate-200">
+            <div className="p-12 md:p-20 text-center bg-white rounded-3xl border border-slate-200">
               <History size={48} className="mx-auto text-slate-200 mb-2" />
-              <p className="text-slate-400 font-medium">
+              <p className="text-slate-400 font-medium text-sm">
                 {statusFiltroHistorico === 'gerado' ? 'Nenhuma nota aguardando faturamento no momento.' : 'Nenhuma nota liquidada encontrada no histórico.'}
               </p>
             </div>

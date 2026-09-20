@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
-import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2, Eye, X, Loader2 } from 'lucide-react';
+import { collection, addDoc, serverTimestamp, query, onSnapshot, doc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2, Eye, X, Loader2, Edit3, Check, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 // BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo Atualizado com Fotos)
@@ -81,6 +81,10 @@ export default function Estoque() {
   const [itemSelecionadoRastrear, setItemSelecionadoRastrear] = useState(null);
   const [historicoAtendimentos, setHistoricoAtendimentos] = useState([]);
   const [carregandoAtendimentos, setCarregandoAtendimentos] = useState(false);
+
+  // Estados para Controle de Edição de Itens
+  const [itemEmEdicao, setItemEmEdicao] = useState(null);
+  const [editForm, setEditForm] = useState({ marca: '', modelo: '', nome: '', qtd: '' });
 
   useEffect(() => {
     if (verFiltroStatus === 'disponivel') {
@@ -253,6 +257,46 @@ export default function Estoque() {
     }
   };
 
+  // Funções de Edição de Estoque
+  const handleIniciarEdicao = (item) => {
+    setItemEmEdicao(item.id);
+    setEditForm({
+      marca: item.marca || '',
+      modelo: item.modelo || '',
+      nome: item.nome || '',
+      qtd: item.qtd !== undefined ? item.qtd : ''
+    });
+  };
+
+  const handleCancelarEdicao = () => {
+    setItemEmEdicao(null);
+    setEditForm({ marca: '', modelo: '', nome: '', qtd: '' });
+  };
+
+  const handleSalvarEdicao = async (id) => {
+    if (!editForm.marca || !editForm.modelo || !editForm.nome || editForm.qtd === '') {
+      return toast.error("Preencha todos os campos da edição!");
+    }
+
+    const loading = toast.loading("Atualizando estoque...");
+    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
+
+    try {
+      const docRef = doc(db, nomeColecao, id);
+      await updateDoc(docRef, {
+        marca: editForm.marca.trim().toLowerCase(),
+        modelo: editForm.modelo.trim().toLowerCase(),
+        nome: editForm.nome.trim().toLowerCase(),
+        qtd: Number(editForm.qtd)
+      });
+
+      setItemEmEdicao(null);
+      toast.success("Estoque atualizado com sucesso!", { id: loading });
+    } catch (error) {
+      toast.error("Erro ao atualizar o item.", { id: loading });
+    }
+  };
+
   const handleExcluir = async (id, nomeCompleto) => {
     const confirmar = window.confirm(`Deseja realmente remover esta entrada do estoque?\n\n"${nomeCompleto}"`);
     if (!confirmar) return;
@@ -368,48 +412,130 @@ export default function Estoque() {
                 <th className="p-4 w-48">Marca / Modelo</th>
                 <th className="p-4">Especificação Técnica & Observação</th>
                 <th className="p-4 text-center w-24">Qtd</th>
-                <th className="p-4 text-center w-24">Ações</th>
+                <th className="p-4 text-center w-32">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 font-medium text-sm">
-              {pecasFiltradas.map((item) => (
-                <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
-                  <td className="p-4 pl-6 text-xs text-slate-400">
-                    {formatarData(item.data_fim || item.data_entrada)}
-                  </td>
-                  <td className="p-4">
-                    <p className="font-black text-slate-800 text-xs uppercase">{item.marca}</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">{item.modelo}</p>
-                  </td>
-                  <td className="p-4 text-xs text-slate-600 uppercase font-semibold">
-                    <p className="break-words max-w-md">{item.nome}</p>
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${Number(item.qtd) > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
-                      {Number(item.qtd)?.toString().padStart(2, '0') || '00'}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setItemSelecionadoRastrear(item)}
-                        className="text-slate-400 active:text-blue-600 md:hover:text-blue-600 p-2 rounded-xl active:bg-blue-50 md:hover:bg-blue-50 transition-colors"
-                        title="Ver atendimentos que usaram esta peça"
-                      >
-                        <Eye size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleExcluir(item.id, item.nome)}
-                        className="text-slate-400 active:text-red-600 md:hover:text-red-600 p-2 rounded-xl active:bg-red-50 md:hover:bg-red-50 transition-colors"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {pecasFiltradas.map((item) => {
+                const eItemEditando = itemEmEdicao === item.id;
+
+                return (
+                  <tr key={item.id} className={eItemEditando ? "bg-blue-50/40 transition-colors" : "hover:bg-slate-50/60 transition-colors"}>
+                    <td className="p-4 pl-6 text-xs text-slate-400">
+                      {formatarData(item.data_fim || item.data_entrada)}
+                    </td>
+                    
+                    {/* Marca e Modelo Editáveis */}
+                    <td className="p-4">
+                      {eItemEditando ? (
+                        <div className="space-y-1">
+                          <input
+                            type="text"
+                            value={editForm.marca}
+                            onChange={(e) => setEditForm({ ...editForm, marca: e.target.value })}
+                            className="w-full p-1 text-xs font-bold uppercase border rounded bg-white"
+                            placeholder="Marca"
+                          />
+                          <input
+                            type="text"
+                            value={editForm.modelo}
+                            onChange={(e) => setEditForm({ ...editForm, modelo: e.target.value })}
+                            className="w-full p-1 text-[10px] font-bold uppercase border rounded bg-white"
+                            placeholder="Modelo"
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <p className="font-black text-slate-800 text-xs uppercase">{item.marca}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase">{item.modelo}</p>
+                        </>
+                      )}
+                    </td>
+
+                    {/* Especificação do Insumo Editável */}
+                    <td className="p-4 text-xs text-slate-600 uppercase font-semibold">
+                      {eItemEditando ? (
+                        <textarea
+                          rows={2}
+                          value={editForm.nome}
+                          onChange={(e) => setEditForm({ ...editForm, nome: e.target.value })}
+                          className="w-full p-1 text-xs border rounded bg-white uppercase font-medium"
+                        />
+                      ) : (
+                        <p className="break-words max-w-md">{item.nome}</p>
+                      )}
+                    </td>
+
+                    {/* Quantidade Editável */}
+                    <td className="p-4 text-center">
+                      {eItemEditando ? (
+                        <input
+                          type="number"
+                          min="0"
+                          value={editForm.qtd}
+                          onChange={(e) => setEditForm({ ...editForm, qtd: e.target.value })}
+                          className="w-16 p-1 text-center font-bold text-xs border rounded bg-white"
+                        />
+                      ) : (
+                        <span className={`font-black text-xs px-2.5 py-1 rounded-lg border ${Number(item.qtd) > 0 ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-amber-50 text-amber-700 border-amber-100'}`}>
+                          {Number(item.qtd)?.toString().padStart(2, '0') || '00'}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Ações Dinâmicas */}
+                    <td className="p-4 text-center">
+                      {eItemEditando ? (
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleSalvarEdicao(item.id)}
+                            className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl transition-colors"
+                            title="Salvar alterações"
+                          >
+                            <Check size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelarEdicao}
+                            className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-xl transition-colors"
+                            title="Cancelar edição"
+                          >
+                            <RotateCcw size={16} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleIniciarEdicao(item)}
+                            className="text-slate-400 active:text-amber-600 md:hover:text-amber-600 p-2 rounded-xl active:bg-amber-50 md:hover:bg-amber-50 transition-colors"
+                            title="Editar item do estoque"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setItemSelecionadoRastrear(item)}
+                            className="text-slate-400 active:text-blue-600 md:hover:text-blue-600 p-2 rounded-xl active:bg-blue-50 md:hover:bg-blue-50 transition-colors"
+                            title="Ver atendimentos que usaram esta peça"
+                          >
+                            <Eye size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleExcluir(item.id, item.nome)}
+                            className="text-slate-400 active:text-red-600 md:hover:text-red-600 p-2 rounded-xl active:bg-red-50 md:hover:bg-red-50 transition-colors"
+                            title="Excluir item do estoque"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {pecasFiltradas.length === 0 && (
                 <tr>
                   <td colSpan="5" className="text-center p-8 text-slate-400 italic text-sm font-normal">

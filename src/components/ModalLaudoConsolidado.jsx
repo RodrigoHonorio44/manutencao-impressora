@@ -8,19 +8,20 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
 
   // Agrupa e conta o total por modelo
   const totalPorModelo = chamados.reduce((acc, item) => {
-    const modelo = `${item.marca || ''} ${item.modelo || ''}`.trim() || 'Outros';
-    acc[modelo] = (acc[modelo] || 0) + 1;
+    const marca = item?.marca || '';
+    const modelo = item?.modelo || '';
+    const chave = `${marca} ${modelo}`.trim() || 'Outros';
+    acc[chave] = (acc[chave] || 0) + 1;
     return acc;
   }, {});
 
-  // Formata datas para o padrão DD/MM/AAAA tratando também Timestamps do Firebase
+  // Formata datas para o padrão DD/MM/AAAA tratando Timestamps do Firebase e Strings
   const formatarData = (data) => {
     if (!data) return '-';
     
     try {
       let dataObj;
 
-      // Se for um Timestamp do Firebase (possui métodos toDate ou toMillis, ou atributo seconds)
       if (typeof data.toDate === 'function') {
         dataObj = data.toDate();
       } else if (typeof data.toMillis === 'function') {
@@ -43,11 +44,9 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
     <>
       <style>{`
         @media print {
-          /* Esconde tudo na impressão */
           body * {
             visibility: hidden !important;
           }
-          /* Exibe apenas o container do modal */
           #modal-laudo-consolidado, #modal-laudo-consolidado * {
             visibility: visible !important;
           }
@@ -69,26 +68,33 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
           }
           @page {
             size: A4 portrait;
-            margin: 6mm;
+            margin: 8mm;
           }
           table {
             font-size: 9px !important;
+            width: 100% !important;
+            border-collapse: collapse !important;
+          }
+          tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           th, td {
-            padding: 3px 5px !important;
+            padding: 4px 6px !important;
+            border: 1px solid #cbd5e1 !important;
           }
         }
       `}</style>
 
-      {/* Overlay com rolagem própria para evitar que o topo corte em zooms de 100% */}
+      {/* Overlay com rolagem e centralização */}
       <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 overflow-y-auto p-2 sm:p-4 flex justify-center items-start">
         
-        {/* Modal sem max-h fixo restritivo */}
+        {/* Container do Modal */}
         <div 
           id="modal-laudo-consolidado"
           className="bg-white rounded-2xl w-full max-w-6xl my-auto flex flex-col shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh]"
         >
-          {/* Cabeçalho Fixo do Modal */}
+          {/* Cabeçalho Fixo */}
           <div className="shrink-0 flex items-center justify-between p-3 sm:p-4 border-b border-slate-200 bg-white z-10 no-print">
             <div>
               <h2 className="text-sm sm:text-base font-bold text-slate-800">
@@ -117,15 +123,15 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
             </div>
           </div>
 
-          {/* Área interna de conteúdo */}
+          {/* Área de Conteúdo */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
-            {/* Título exclusivo de impressão */}
+            {/* Título de Impressão */}
             <div className="hidden print:block border-b pb-2 mb-2">
-              <h1 className="text-xs font-bold text-slate-900 uppercase">
+              <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight">
                 Laudo Técnico Consolidado - Relatório Geral
               </h1>
-              <p className="text-[10px] text-slate-600">
-                Total de itens: <strong>{chamados.length}</strong>
+              <p className="text-[10px] text-slate-600 mt-0.5">
+                Total de equipamentos listados: <strong>{chamados.length}</strong>
               </p>
             </div>
 

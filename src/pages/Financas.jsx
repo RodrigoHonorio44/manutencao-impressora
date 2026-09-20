@@ -75,7 +75,6 @@ export default function Financas() {
 
               dados.servicos?.forEach(s => {
                 if (s.cliente) {
-                  // Mantendo a lógica de somar por item, caso queira o valor real substitua por (dados.valor_total / dados.servicos.length)
                   mapaClientes[s.cliente] = (mapaClientes[s.cliente] || 0) + 70;
                 }
               });
@@ -157,7 +156,6 @@ export default function Financas() {
 
     try {
       await addDoc(collection(db, "despesas_empresa"), {
-        // Forçando o salvamento em letras minúsculas para manter a padronização de busca
         descricao: novaDespesa.descricao.toLowerCase(),
         valor: Number(novaDespesa.valor),
         categoria: novaDespesa.categoria,
@@ -250,7 +248,7 @@ export default function Financas() {
                 ${itens?.map(item => `
                   <tr>
                     <td>
-                      <div class="eq-name">${item.marca} ${item.modelo}</div>
+                      <div class="eq-name">${item.marca}${item.modelo}</div>
                       <div class="eq-serial">S/N: ${item.serial}</div>
                     </td>
                     <td><div class="client-name">${item.cliente}</div></td>
@@ -439,7 +437,7 @@ export default function Financas() {
           {/* RANKING CLIENTES */}
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col">
             <h3 className="font-black text-slate-800 text-xs uppercase tracking-wide mb-4 flex items-center gap-2">
-              <Users size={16} className="text-slate-400" /> Recebido por Client
+              <Users size={16} className="text-slate-400" /> Recebido por Cliente
             </h3>
             <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
               {dadosFiltrados.rankingClientes.map((cli, idx) => (
