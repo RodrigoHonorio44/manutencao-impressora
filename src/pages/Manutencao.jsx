@@ -27,6 +27,13 @@ const MODELOS_DISPONIVEIS = {
 export default function Manutencao() {
   const [chamados, setChamados] = useState([]);
   const [form, setForm] = useState({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
+  
+  // Estados para controle de digitação manual de marca e modelo
+  const [marcaManual, setMarcaManual] = useState('');
+  const [isMarcaManual, setIsMarcaManual] = useState(false);
+  const [modeloManual, setModeloManual] = useState('');
+  const [isModeloManual, setIsModeloManual] = useState(false);
+
   const [modalAberto, setModalAberto] = useState(false);
   const [chamadoSelecionado, setChamadoSelecionado] = useState(null);
 
@@ -146,6 +153,9 @@ export default function Manutencao() {
         }
       }
 
+      setIsMarcaManual(false);
+      setIsModeloManual(false);
+
       setForm(prev => ({
         ...prev,
         serial: novoSerial || prev.serial,
@@ -174,7 +184,11 @@ export default function Manutencao() {
     if (!form.cliente) {
       return toast.error("Selecione um Cliente / Unidade!");
     }
-    if (!form.marca || !form.modelo || !form.serial) {
+
+    const marcaFinal = isMarcaManual ? marcaManual.trim() : form.marca;
+    const modeloFinal = isModeloManual ? modeloManual.trim() : form.modelo;
+
+    if (!marcaFinal || !modeloFinal || !form.serial) {
       return toast.error("Marca, Modelo e Serial são obrigatórios!");
     }
     
@@ -184,8 +198,8 @@ export default function Manutencao() {
     try {
       await addDoc(collection(db, "atendimentos"), {
         cliente: form.cliente.toLowerCase(),
-        marca: form.marca,
-        modelo: form.modelo,
+        marca: marcaFinal.toLowerCase(),
+        modelo: modeloFinal.toLowerCase(),
         serial: form.serial.trim().toLowerCase(),
         defeito: form.defeito.toLowerCase(),
         os: numeroOS,
@@ -195,6 +209,10 @@ export default function Manutencao() {
       });
 
       setForm({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
+      setMarcaManual('');
+      setModeloManual('');
+      setIsMarcaManual(false);
+      setIsModeloManual(false);
       setHistoricoEquipamento([]);
       toast.success(`OS ${numeroOS} registrada!`, { id: loading });
     } catch (error) { 
@@ -247,30 +265,78 @@ export default function Manutencao() {
             ))}
           </select>
           
-          <select
-            value={form.marca}
-            onChange={(e) => setForm({ ...form, marca: e.target.value, modelo: '' })}
-            className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
-          >
-            <option value="">Selecione a Marca...</option>
-            {Object.keys(MODELOS_DISPONIVEIS).map((marca) => (
-              <option key={marca} value={marca}>{marca}</option>
-            ))}
-          </select>
+          {/* Campo de Seleção ou Digitação da Marca */}
+          <div className="flex flex-col gap-2 w-full">
+            <select
+              value={isMarcaManual ? "MANUAL" : form.marca}
+              onChange={(e) => {
+                if (e.target.value === "MANUAL") {
+                  setIsMarcaManual(true);
+                  setForm({ ...form, marca: '', modelo: '' });
+                  setIsModeloManual(true);
+                } else {
+                  setIsMarcaManual(false);
+                  setForm({ ...form, marca: e.target.value, modelo: '' });
+                  setIsModeloManual(false);
+                }
+              }}
+              className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
+            >
+              <option value="">Selecione a Marca...</option>
+              {Object.keys(MODELOS_DISPONIVEIS).map((marca) => (
+                <option key={marca} value={marca}>{marca}</option>
+              ))}
+              <option value="MANUAL">-- Outra Marca (Digitar Manualmente) --</option>
+            </select>
 
-          <select
-            value={form.modelo}
-            disabled={!form.marca}
-            onChange={(e) => setForm({ ...form, modelo: e.target.value })}
-            className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm disabled:cursor-not-allowed disabled:text-slate-400 w-full"
-          >
-            <option value="">
-              {form.marca ? "Selecione o Modelo..." : "Escolha a marca primeiro..."}
-            </option>
-            {form.marca && MODELOS_DISPONIVEIS[form.marca].map((mod) => (
-              <option key={mod} value={mod}>{mod}</option>
-            ))}
-          </select>
+            {isMarcaManual && (
+              <input
+                type="text"
+                placeholder="Digite a Marca manualmente"
+                value={marcaManual}
+                onChange={(e) => setMarcaManual(e.target.value.toLowerCase())}
+                className="p-3 bg-slate-50 border border-blue-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
+              />
+            )}
+          </div>
+
+          {/* Campo de Seleção ou Digitação do Modelo */}
+          <div className="flex flex-col gap-2 w-full">
+            {!isMarcaManual ? (
+              <select
+                value={isModeloManual ? "MANUAL" : form.modelo}
+                disabled={!form.marca}
+                onChange={(e) => {
+                  if (e.target.value === "MANUAL") {
+                    setIsModeloManual(true);
+                    setForm({ ...form, modelo: '' });
+                  } else {
+                    setIsModeloManual(false);
+                    setForm({ ...form, modelo: e.target.value });
+                  }
+                }}
+                className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm disabled:cursor-not-allowed disabled:text-slate-400 w-full"
+              >
+                <option value="">
+                  {form.marca ? "Selecione o Modelo..." : "Escolha a marca primeiro..."}
+                </option>
+                {form.marca && MODELOS_DISPONIVEIS[form.marca]?.map((mod) => (
+                  <option key={mod} value={mod}>{mod}</option>
+                ))}
+                {form.marca && <option value="MANUAL">-- Outro Modelo (Digitar Manualmente) --</option>}
+              </select>
+            ) : null}
+
+            {(isModeloManual || isMarcaManual) && (
+              <input
+                type="text"
+                placeholder="Digite o Modelo manualmente"
+                value={modeloManual}
+                onChange={(e) => setModeloManual(e.target.value.toLowerCase())}
+                className="p-3 bg-slate-50 border border-blue-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
+              />
+            )}
+          </div>
 
           <div className="flex flex-col space-y-1 w-full">
             <input 
