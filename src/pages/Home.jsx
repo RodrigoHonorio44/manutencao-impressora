@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { Printer, Clock, CheckCircle2, PackageCheck, PlusCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -15,30 +15,62 @@ export default function Home() {
   const [ultimasImpressoras, setUltimasImpressoras] = useState([]);
 
   useEffect(() => {
-    // 1. Consulta para bancada e chamados ativos
-    const qAtivos = query(
-      collection(db, "atendimentos"),
-      where("status", "not-in", ["Finalizado", "Faturado"])
-    );
-
-    const unsubscribeAtivos = onSnapshot(qAtivos, (snapshot) => {
+    // Escuta toda a coleção 'atendimentos' para evitar erros de índice do Firestore
+    const unsubscribeAtendimentos = onSnapshot(collection(db, "atendimentos"), (snapshot) => {
       const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      
+
+      // 1. Equipamentos na Bancada
       const bancada = docs.filter(d => d.status === 'Em Análise' || d.status === 'Em Manutenção').length;
+
+      // 2. Aguardando Peça
       const aguardando = docs.filter(d => d.status === 'Aguardando Peça').length;
 
+      // 3. Concluídos no Mês Atual
+      const agora = new Date();
+      const anoAtual = agora.getFullYear();
+      const mesAtual = agora.getMonth();
+
+      const concluidos = docs.filter(d => {
+        const statusValido = d.status === 'Finalizado' || d.status === 'Faturado' || d.status === 'Pronto';
+        
+        if (!statusValido) return false;
+
+        // Se houver data de finalização, valida se foi neste mês
+        if (d.data_finalizacao?.seconds) {
+          const dataFinal = new Date(d.data_finalizacao.seconds * 1000);
+          return dataFinal.getFullYear() === anoAtual && dataFinal.getMonth() === mesAtual;
+        }
+
+        // Se o status for concluído/faturado mas não tiver data_finalizacao registrada, inclui por segurança
+        return true;
+      }).length;
+
+      // Atualiza o estado
       setEstatisticas(prev => ({
         ...prev,
         naBancada: bancada,
-        aguardandoPeca: aguardando
+        aguardandoPeca: aguardando,
+        concluidosMes: concluidos
       }));
 
-      // Ordenar por data de entrada para mostrar as últimas na Home
-      const ordenadas = docs.sort((a, b) => (b.data_entrada?.seconds || 0) - (a.data_entrada?.seconds || 0));
+      // 4. Últimas impressoras ativas na bancada
+      const ativos = docs.filter(d => d.status !== 'Finalizado' && d.status !== 'Faturado');
+      const ordenadas = ativos.sort((a, b) => (b.data_entrada?.seconds || 0) - (a.data_entrada?.seconds || 0));
       setUltimasImpressoras(ordenadas.slice(0, 5));
     });
 
-    return () => unsubscribeAtivos();
+    // Escuta o estoque de peças
+    const unsubscribeEstoque = onSnapshot(collection(db, "estoque_pecas"), (snapshot) => {
+      setEstatisticas(prev => ({
+        ...prev,
+        itensEstoque: snapshot.docs.length
+      }));
+    });
+
+    return () => {
+      unsubscribeAtendimentos();
+      unsubscribeEstoque();
+    };
   }, []);
 
   return (
@@ -49,7 +81,7 @@ export default function Home() {
         <p className="text-slate-500 font-medium text-sm mt-1">Olá, Rodrigo. Veja o resumo da sua assistência hoje.</p>
       </header>
 
-      {/* GRID DE CARDS (RESPONSIVO PARA PC E NOTEBOOK) */}
+      {/* GRID DE CARDS */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1 */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
@@ -73,32 +105,32 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Card 3 */}
+        {/* Card 3 - CONCLUÍDOS DINÂMICO */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
             <CheckCircle2 size={28} />
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Concluídos (Mês)</p>
-            <h3 className="text-2xl font-black text-slate-800">30</h3>
+            <h3 className="text-2xl font-black text-slate-800">{String(estatisticas.concluidosMes).padStart(2, '0')}</h3>
           </div>
         </div>
 
-        {/* Card 4 */}
+        {/* Card 4 - ESTOQUE DINÂMICO */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
           <div className="p-3 bg-slate-100 text-slate-700 rounded-xl">
             <PackageCheck size={28} />
           </div>
           <div>
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Itens em Estoque</p>
-            <h3 className="text-2xl font-black text-slate-800">04</h3>
+            <h3 className="text-2xl font-black text-slate-800">{String(estatisticas.itensEstoque).padStart(2, '0')}</h3>
           </div>
         </div>
       </section>
 
-      {/* SEÇÃO PRINCIPAL (TABELA + BANNER LATERAL ALINHADOS NO PC) */}
+      {/* SEÇÃO PRINCIPAL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        {/* LADO ESQUERDO: LISTA DE IMPRESSORAS (2 COLUNAS NO DESKTOP) */}
+        {/* LADO ESQUERDO: LISTA DE IMPRESSORAS */}
         <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm min-h-[320px] flex flex-col justify-between">
           <div>
             <h2 className="text-lg font-bold text-slate-800 mb-4">Últimas Impressoras Recebidas</h2>
@@ -126,7 +158,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* LADO DIREITO: CARD DE AÇÃO (1 COLUNA NO DESKTOP) */}
+        {/* LADO DIREITO: CARD DE AÇÃO */}
         <div className="bg-slate-900 text-white p-6 md:p-8 rounded-2xl shadow-xl flex flex-col justify-between min-h-[320px]">
           <div>
             <h3 className="text-2xl font-black tracking-tight mb-2">Pronto para começar?</h3>
