@@ -3,7 +3,8 @@
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname.startsWith('192.168.');
 
 const LOCAL_API_URL = import.meta.env.VITE_API_URL || 'http://192.168.0.194:3000/api';
-const PUBLIC_API_URL = import.meta.env.VITE_PUBLIC_API_URL || 'https://sua-api.seudominio.com/api';
+// Alterado para VITE_API_URL e adicionado o /api no final do domínio do túnel
+const PUBLIC_API_URL = import.meta.env.VITE_API_URL || 'https://api-impressora.rodhonsystem.com.br/api';
 
 const API_URL = isLocal ? LOCAL_API_URL : PUBLIC_API_URL;
 
@@ -108,7 +109,7 @@ export const api = {
     return Array.isArray(data) ? data : (data.data || []);
   },
 
-  // --- MÉTODOS DE DESPESAS (Corrigido para despesas_empresa) ---
+  // --- MÉTODOS DE DESPESAS ---
   getDespesas: async () => {
     const response = await fetch(`${API_URL}/despesas_empresa`, {
       headers: getHeaders()
