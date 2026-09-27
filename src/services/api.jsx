@@ -2,9 +2,8 @@
 
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname.startsWith('192.168.');
 
-const LOCAL_API_URL = import.meta.env.VITE_API_URL || 'http://192.168.0.194:3000/api';
-// Alterado para VITE_API_URL e adicionado o /api no final do domínio do túnel
-const PUBLIC_API_URL = import.meta.env.VITE_API_URL || 'https://api-impressora.rodhonsystem.com.br/api';
+const LOCAL_API_URL = 'http://192.168.0.194:3000/api';
+const PUBLIC_API_URL = 'https://api-impressora.rodhonsystem.com.br/api';
 
 const API_URL = isLocal ? LOCAL_API_URL : PUBLIC_API_URL;
 
