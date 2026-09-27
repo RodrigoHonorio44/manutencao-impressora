@@ -1,6 +1,5 @@
-import { useState } from 'react';
-import { db } from '../firebase/config';
-import { collection, query, getDocs, orderBy, where } from 'firebase/firestore';
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../services/api';
 import { FileText, Search, Printer, Calendar, Loader2, ChevronRight, ChevronLeft, BarChart3 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -19,31 +18,22 @@ export default function RelatorioConsumo() {
   const [paginaAtual, setPaginaAtual] = useState(1);
   const ITENS_POR_PAGINA = 10;
 
-  // 1. Busca e Consolidação Otimizada
-  const buscarDados = async () => {
+  // 1. Busca e Consolidação Otimizada via api.getAtendimentos()
+  const buscarDados = useCallback(async () => {
     setCarregando(true);
     setPaginaAtual(1);
     
     try {
-      let q = collection(db, "atendimentos");
-      // Ordenação inicial por finalização
-      let filtros = [orderBy("data_finalizacao", "desc")];
+      const data = await api.getAtendimentos();
+      const dadosBrutos = Array.isArray(data) ? data : [];
 
-      const queryFinal = query(q, ...filtros);
-      const snapshot = await getDocs(queryFinal);
-
-      if (snapshot.empty) {
+      if (dadosBrutos.length === 0) {
         setAtendimentos([]);
         setAtendimentosPaginados([]);
         setResumoPecasGastas({});
         toast.error("Nenhum atendimento encontrado.");
         return;
       }
-
-      const dadosBrutos = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
 
       // =========================================================================
       // 1. FILTRAGEM COMPLETA EM MEMÓRIA (Garante consistência total dos dados)
@@ -60,22 +50,41 @@ export default function RelatorioConsumo() {
           if (!nomeClienteBanco.includes(nomeBuscado)) return false;
         }
 
-        // Conversão e tratamento de datas
-        const dataAtendimentoMs = atendimento.data_finalizacao?.seconds 
-          ? atendimento.data_finalizacao.seconds * 1000 
-          : new Date(atendimento.data_finalizacao || atendimento.data_entrada).getTime();
+        // Conversão e tratamento seguro de datas (suporta string, $date do mongo ou objeto)
+        let dataAtendimentoMs = 0;
+        const d = atendimento.data_finalizacao || atendimento.data_entrada;
+        if (d) {
+          if (typeof d === 'object' && d.$date) {
+            dataAtendimentoMs = new Date(d.$date).getTime();
+          } else if (typeof d.seconds === 'number') {
+            dataAtendimentoMs = d.seconds * 1000;
+          } else {
+            dataAtendimentoMs = new Date(d).getTime();
+          }
+        }
         
-        if (filtroDataInicio) {
+        if (filtroDataInicio && dataAtendimentoMs) {
           if (dataAtendimentoMs < new Date(filtroDataInicio).getTime()) return false;
         }
-        if (filtroDataFim) {
-          // Ajusta para o final do dia escolhido
+        if (filtroDataFim && dataAtendimentoMs) {
           const limiteFim = new Date(filtroDataFim);
           limiteFim.setHours(23, 59, 59, 999);
           if (dataAtendimentoMs > limiteFim.getTime()) return false;
         }
         
         return true;
+      });
+
+      // Ordenação decrescente por data de finalização
+      dadosFiltrados.sort((a, b) => {
+        const getMillis = (item) => {
+          const dt = item.data_finalizacao || item.data_entrada;
+          if (!dt) return 0;
+          if (typeof dt === 'object' && dt.$date) return new Date(dt.$date).getTime();
+          if (typeof dt.seconds === 'number') return dt.seconds * 1000;
+          return new Date(dt).getTime() || 0;
+        };
+        return getMillis(b) - getMillis(a);
       });
 
       // =========================================================================
@@ -121,8 +130,6 @@ export default function RelatorioConsumo() {
 
       setResumoPecasGastas(acumuladorPecas);
       setAtendimentos(dadosFiltrados);
-      
-      // Define a exibição da primeira página de forma fatiada
       setAtendimentosPaginados(dadosFiltrados.slice(0, ITENS_POR_PAGINA));
 
     } catch (error) {
@@ -131,9 +138,14 @@ export default function RelatorioConsumo() {
     } finally {
       setCarregando(false);
     }
-  };
+  }, [buscaCliente, filtroDataInicio, filtroDataFim]);
 
-  // Lógica de navegação local (Rápida e sem re-buscar no Firebase)
+  // Carrega automaticamente ao abrir a tela
+  useEffect(() => {
+    buscarDados();
+  }, [buscarDados]);
+
+  // Lógica de navegação local (Rápida e sem re-buscar na API)
   const mudarPagina = (novaPagina) => {
     const indiceInicial = (novaPagina - 1) * ITENS_POR_PAGINA;
     const indiceFinal = indiceInicial + ITENS_POR_PAGINA;
@@ -143,14 +155,18 @@ export default function RelatorioConsumo() {
 
   const formatarData = (campoData) => {
     if (!campoData) return '---';
+    if (typeof campoData === 'object' && campoData.$date) {
+      return new Date(campoData.$date).toLocaleDateString('pt-BR');
+    }
     if (typeof campoData.toDate === 'function') return campoData.toDate().toLocaleDateString('pt-BR');
     if (campoData.seconds) return new Date(campoData.seconds * 1000).toLocaleDateString('pt-BR');
-    return new Date(campoData).toLocaleDateString('pt-BR');
+    const dt = new Date(campoData);
+    return isNaN(dt.getTime()) ? '---' : dt.toLocaleDateString('pt-BR');
   };
 
   const valoresValidos = Object.values(resumoPecasGastas);
   const valorMaximo = valoresValidos.length > 0 ? Math.max(...valoresValidos) : 1;
-  const totalPaginas = Math.ceil(atendimentos.length / ITENS_POR_PAGINA);
+  const totalPaginas = Math.ceil(atendimentos.length / ITENS_POR_PAGINA) || 1;
 
   return (
     <div className="p-8 space-y-8 bg-slate-50 min-h-screen print:bg-white print:p-0 print:space-y-0 print:m-0 id-container-relatorio-impressao">
@@ -290,7 +306,7 @@ export default function RelatorioConsumo() {
       {carregando ? (
         <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2 print:hidden">
           <Loader2 size={32} className="animate-spin text-blue-600" />
-          <span className="text-xs font-bold uppercase tracking-widest">Processando base do Firestore...</span>
+          <span className="text-xs font-bold uppercase tracking-widest">Processando base de dados...</span>
         </div>
       ) : atendimentos.length > 0 ? (
         <div className="space-y-6 print:space-y-6 w-full layout-impressao-isolado">
@@ -353,7 +369,7 @@ export default function RelatorioConsumo() {
               </thead>
               <tbody className="divide-y divide-slate-200 text-slate-700 font-medium">
                 {atendimentosPaginados.map((atendimento) => (
-                  <tr key={atendimento.id} className="hover:bg-slate-50/50 transition-colors print:break-inside-avoid">
+                  <tr key={atendimento._id || atendimento.id} className="hover:bg-slate-50/50 transition-colors print:break-inside-avoid">
                     <td className="p-3 pl-5 font-semibold text-slate-500 whitespace-nowrap print:p-2 print:pl-3 print:text-slate-900">
                       {formatarData(atendimento.data_finalizacao || atendimento.data_atendimento || atendimento.data_entrada)}
                     </td>

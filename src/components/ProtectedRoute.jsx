@@ -1,15 +1,12 @@
 import { Navigate } from 'react-router-dom';
-import { auth } from '../firebase/config';
-import { useAuthState } from 'react-firebase-hooks/auth'; // Instale: npm install react-firebase-hooks
 
 export default function ProtectedRoute({ children }) {
-  const [user, loading] = useAuthState(auth);
+  // Verifica se existe um utilizador ou token guardado no localStorage
+  const usuario = localStorage.getItem('usuario') || localStorage.getItem('token');
 
-  if (loading) return <div className="flex justify-center items-center h-screen">Carregando...</div>;
-
-  if (!user) {
+  if (!usuario) {
     // Se não estiver logado, manda de volta para o login
-    return <Navigate to="/" />;
+    return <Navigate to="/" replace />;
   }
 
   return children;

@@ -12,17 +12,7 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
     if (!data) return 'N/A';
 
     try {
-      let dataObj;
-
-      if (typeof data.toDate === 'function') {
-        dataObj = data.toDate();
-      } else if (typeof data.toMillis === 'function') {
-        dataObj = new Date(data.toMillis());
-      } else if (data?.seconds !== undefined) {
-        dataObj = new Date(data.seconds * 1000);
-      } else {
-        dataObj = new Date(data);
-      }
+      let dataObj = new Date(data);
 
       if (isNaN(dataObj.getTime())) return 'N/A';
 

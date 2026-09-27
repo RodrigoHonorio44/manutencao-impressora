@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, query, onSnapshot, doc, updateDoc, addDoc } from 'firebase/firestore';
-import { DollarSign, FileText, BarChart3, Users, Printer, CheckCircle2, Plus, TrendingDown, Wallet } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { DollarSign, BarChart3, Users, Printer, CheckCircle2, Plus, TrendingDown, Wallet, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { api } from '../services/api';
 
 export default function Financas() {
   const agora = new Date();
@@ -33,120 +32,161 @@ export default function Financas() {
 
   const anos = Array.from({ length: 4 }, (_, i) => agora.getFullYear() - i);
 
-  useEffect(() => {
-    const qFaturamento = query(collection(db, "historico_notas"));
-    const qDespesas = query(collection(db, "despesas_empresa"));
-    
-    let notasCarregadas = [];
-    let despesasCarregadas = [];
+  // Helper robusto para converter datas, lidando também com o formato MongoDB { $date: "..." }
+  const parseData = (data) => {
+    if (!data) return null;
 
-    // Função unificada para processar finanças após retornos do Firebase
-    const processarDadosFinancas = (notas, despesas) => {
-      let somaPeriodo = 0;
-      let contagemNotas = 0;
-      let somaDespesas = 0;
-      const faturadas = [];
-      const pendentes = [];
-      const mapaClientes = {};
-      const despesasFiltradas = [];
+    let rawData = data;
+    // Se vier no formato do MongoDB { $date: "2026-09-10T..." }
+    if (typeof data === 'object' && data.$date) {
+      rawData = data.$date;
+    }
 
-      // 1. Processar Notas / Receitas
-      notas.forEach(dados => {
-        const dataReferencia = dados.data_faturamento?.toDate() || dados.data_fechamento?.toDate();
-        if (dataReferencia) {
-          const m = dataReferencia.getMonth();
-          const a = dataReferencia.getFullYear();
+    // Se for string no formato YYYY-MM-DD
+    if (typeof rawData === 'string' && rawData.length >= 10 && rawData.includes('-')) {
+      const partes = rawData.substring(0, 10).split('-');
+      if (partes.length === 3) {
+        return new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]));
+      }
+    }
 
-          // Condição de filtro: Se for anual, valida apenas o ano. Se for mensal, valida mês e ano.
-          const atendeFiltro = tipoFiltro === 'anual' 
-            ? a === Number(anoSelecionado)
-            : m === Number(mesSelecionado) && a === Number(anoSelecionado);
+    const d = new Date(rawData);
+    return isNaN(d.getTime()) ? null : d;
+  };
 
-          if (atendeFiltro) {
-            const notaTratada = {
-              ...dados,
-              data_formatada: dataReferencia.toLocaleDateString('pt-BR')
-            };
+  // Processa e aplica os filtros nos dados vindos do backend
+  const processarDadosFinancas = useCallback((notas, despesas) => {
+    let somaPeriodo = 0;
+    let contagemNotas = 0;
+    let somaDespesas = 0;
+    const faturadas = [];
+    const pendentes = [];
+    const mapaClientes = {};
+    const despesasFiltradas = [];
 
-            if (dados.status === 'faturado') {
-              somaPeriodo += dados.valor_total || 0;
-              contagemNotas += 1;
-              faturadas.push(notaTratada);
+    // 1. Processar Notas / Receitas
+    notas.forEach((dados, index) => {
+      const dataReferencia = parseData(dados.data_faturamento) || parseData(dados.data_fechamento) || parseData(dados.createdAt);
+      if (dataReferencia) {
+        const m = dataReferencia.getMonth();
+        const a = dataReferencia.getFullYear();
 
-              dados.servicos?.forEach(s => {
-                if (s.cliente) {
-                  mapaClientes[s.cliente] = (mapaClientes[s.cliente] || 0) + 70;
-                }
-              });
-            } else {
-              pendentes.push(notaTratada);
-            }
-          }
-        }
-      });
+        const atendeFiltro = tipoFiltro === 'anual' 
+          ? a === Number(anoSelecionado)
+          : m === Number(mesSelecionado) && a === Number(anoSelecionado);
 
-      // 2. Processar Despesas (MEI, Insumos, Ferramentas)
-      despesas.forEach(dados => {
-        const dataDespesa = dados.data_gasto?.toDate();
-        if (dataDespesa) {
-          const m = dataDespesa.getMonth();
-          const a = dataDespesa.getFullYear();
+        if (atendeFiltro) {
+          const notaTratada = {
+            ...dados,
+            uniqueKey: `${dados.id || dados._id || 'nota'}-${index}`,
+            data_formatada: dataReferencia.toLocaleDateString('pt-BR')
+          };
 
-          const atendeFiltro = tipoFiltro === 'anual'
-            ? a === Number(anoSelecionado)
-            : m === Number(mesSelecionado) && a === Number(anoSelecionado);
+          if (dados.status === 'faturado') {
+            somaPeriodo += dados.valor_total || 0;
+            contagemNotas += 1;
+            faturadas.push(notaTratada);
 
-          if (atendeFiltro) {
-            somaDespesas += dados.valor || 0;
-            despesasFiltradas.push({
-              ...dados,
-              data_formatada: dataDespesa.toLocaleDateString('pt-BR')
+            dados.servicos?.forEach(s => {
+              if (s.cliente) {
+                const clienteNome = String(s.cliente).toLowerCase();
+                mapaClientes[clienteNome] = (mapaClientes[clienteNome] || 0) + (s.valor || 70);
+              }
             });
+          } else {
+            pendentes.push(notaTratada);
           }
+        }
+      }
+    });
+
+    // 2. Processar Despesas da coleção despesas_empresa
+    despesas.forEach((dados, index) => {
+      const dataDespesa = parseData(dados.data_gasto) || parseData(dados.data) || parseData(dados.createdAt);
+      
+      if (dataDespesa) {
+        const m = dataDespesa.getMonth();
+        const a = dataDespesa.getFullYear();
+
+        const atendeFiltro = tipoFiltro === 'anual'
+          ? a === Number(anoSelecionado)
+          : m === Number(mesSelecionado) && a === Number(anoSelecionado);
+
+        if (atendeFiltro) {
+          somaDespesas += Number(dados.valor || 0);
+          despesasFiltradas.push({
+            ...dados,
+            uniqueKey: `${dados.id || dados._id || 'desp'}-${index}`,
+            descricao: String(dados.descricao || '').toLowerCase(),
+            data_formatada: dataDespesa.toLocaleDateString('pt-BR')
+          });
+        }
+      }
+    });
+
+    const rankingOrdenado = Object.keys(mapaClientes).map(nome => ({
+      nome,
+      total: mapaClientes[nome]
+    })).sort((a, b) => b.total - a.total);
+
+    const ordenarPorData = (arr) => [...arr].sort((a, b) => {
+      const dA = parseData(a.data_faturamento) || parseData(a.data_fechamento) || parseData(a.data_gasto) || parseData(a.data) || parseData(a.createdAt);
+      const dB = parseData(b.data_faturamento) || parseData(b.data_fechamento) || parseData(b.data_gasto) || parseData(b.data) || parseData(b.createdAt);
+      return (dB || 0) - (dA || 0);
+    });
+
+    setDadosFiltrados({
+      totalFaturado: somaPeriodo,
+      totalDespesas: somaDespesas,
+      lucroLiquido: somaPeriodo - somaDespesas,
+      qtdNotas: contagemNotas,
+      ticketMedio: contagemNotas > 0 ? (somaPeriodo / contagemNotas) : 0,
+      notasFaturadas: ordenarPorData(faturadas),
+      notasPendentes: ordenarPorData(pendentes),
+      rankingClientes: rankingOrdenado,
+      listaDespesas: ordenarPorData(despesasFiltradas)
+    });
+  }, [tipoFiltro, mesSelecionado, anoSelecionado]);
+
+  // Função para carregar dados do backend
+  const carregarDados = useCallback(async () => {
+    try {
+      const [resFaturadas, resPendentes, resDespesas] = await Promise.all([
+        api.getHistoricoNotas('faturado', 1, 100).catch(() => []),
+        api.getHistoricoNotas('gerado', 1, 100).catch(() => []),
+        api.getDespesas().catch(() => [])
+      ]);
+
+      const notasFaturadas = Array.isArray(resFaturadas) ? resFaturadas : (resFaturadas.data || []);
+      const notasPendentes = Array.isArray(resPendentes) ? resPendentes : (resPendentes.data || []);
+      
+      const notasBrutas = [...notasFaturadas, ...notasPendentes];
+      const notasUnicasMap = new Map();
+      
+      notasBrutas.forEach(n => {
+        const idUnico = n._id || n.id;
+        if (idUnico && !notasUnicasMap.has(idUnico)) {
+          notasUnicasMap.set(idUnico, { id: idUnico, ...n });
         }
       });
 
-      const rankingOrdenado = Object.keys(mapaClientes).map(nome => ({
-        nome,
-        total: mapaClientes[nome]
-      })).sort((a, b) => b.total - a.total);
+      const todasNotas = Array.from(notasUnicasMap.values());
+      
+      const listaDespesasBruta = Array.isArray(resDespesas) ? resDespesas : (resDespesas.data || []);
+      const despesas = listaDespesasBruta.map(d => ({ id: d._id || d.id, ...d }));
 
-      const ordenarPorData = (arr) => arr.sort((a, b) => {
-        const dA = a.data_faturamento?.toDate() || a.data_fechamento?.toDate() || a.data_gasto?.toDate();
-        const dB = b.data_faturamento?.toDate() || b.data_fechamento?.toDate() || b.data_gasto?.toDate();
-        return dB - dA;
-      });
+      processarDadosFinancas(todasNotas, despesas);
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao carregar dados financeiros do banco.");
+    }
+  }, [processarDadosFinancas]);
 
-      setDadosFiltrados({
-        totalFaturado: somaPeriodo,
-        totalDespesas: somaDespesas,
-        lucroLiquido: somaPeriodo - somaDespesas,
-        qtdNotas: contagemNotas,
-        ticketMedio: contagemNotas > 0 ? (somaPeriodo / contagemNotas) : 0,
-        notasFaturadas: ordenarPorData(faturadas),
-        notasPendentes: ordenarPorData(pendentes),
-        rankingClientes: rankingOrdenado,
-        listaDespesas: ordenarPorData(despesasFiltradas)
-      });
-    };
+  useEffect(() => {
+    carregarDados();
+  }, [carregarDados]);
 
-    const unsubNotas = onSnapshot(qFaturamento, (snapshot) => {
-      notasCarregadas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      processarDadosFinancas(notasCarregadas, despesasCarregadas);
-    });
-
-    const unsubDespesas = onSnapshot(qDespesas, (snapshot) => {
-      despesasCarregadas = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      processarDadosFinancas(notasCarregadas, despesasCarregadas);
-    });
-
-    return () => {
-      unsubNotas();
-      unsubDespesas();
-    };
-  }, [mesSelecionado, anoSelecionado, tipoFiltro]);
-
-  // Função para salvar despesa no Firebase
+  // Cadastrar nova despesa
   const cadastrarDespesa = async (e) => {
     e.preventDefault();
     if (!novaDespesa.descricao || !novaDespesa.valor) {
@@ -155,29 +195,42 @@ export default function Financas() {
     }
 
     try {
-      await addDoc(collection(db, "despesas_empresa"), {
-        descricao: novaDespesa.descricao.toLowerCase(),
+      await api.criarDespesa({
+        descricao: novaDespesa.descricao.trim().toLowerCase(),
         valor: Number(novaDespesa.valor),
         categoria: novaDespesa.categoria,
-        data_gasto: new Date()
+        data_gasto: new Date().toISOString()
       });
 
       toast.success("Despesa registrada com sucesso!");
       setNovaDespesa({ descricao: '', valor: '', categoria: 'Operacional' });
+      carregarDados();
     } catch (error) {
       console.error(error);
       toast.error("Erro ao registrar gasto.");
     }
   };
 
+  // Excluir despesa
+  const excluirDespesa = async (id) => {
+    if (!window.confirm("Deseja realmente excluir este lançamento de gasto?")) return;
+    
+    try {
+      await api.excluirDespesa(id);
+      toast.success("Despesa removida com sucesso!");
+      carregarDados();
+    } catch (error) {
+      console.error(error);
+      toast.error("Erro ao excluir despesa.");
+    }
+  };
+
+  // Alterar status de uma nota para faturado
   const faturarNota = async (id) => {
     try {
-      const notaRef = doc(db, "historico_notas", id);
-      await updateDoc(notaRef, {
-        status: 'faturado',
-        data_faturamento: new Date()
-      });
+      await api.faturarNota(id);
       toast.success("Nota faturada com sucesso! Lançamento enviado ao caixa.");
+      carregarDados();
     } catch (error) {
       console.error(error);
       toast.error("Erro ao faturar a nota.");
@@ -212,9 +265,9 @@ export default function Financas() {
             table { width: 100%; border-collapse: collapse; margin-bottom: 35px; }
             th { background-color: #f8fafc; border-bottom: 2px solid #cbd5e1; color: #64748b; font-size: 11px; font-weight: 800; text-transform: uppercase; padding: 12px 16px; text-align: left; }
             td { border-bottom: 1px solid #e2e8f0; padding: 14px 16px; font-size: 13px; vertical-align: top; }
-            .eq-name { font-weight: 700; color: #0f172a; font-size: 13.5px; }
+            .eq-name { font-weight: 700; color: #0f172a; font-size: 13.5px; text-transform: uppercase; }
             .eq-serial { font-family: monospace; font-size: 11.5px; color: #64748b; margin-top: 2px; }
-            .client-name { font-weight: 600; color: #334155; }
+            .client-name { font-weight: 600; color: #334155; text-transform: uppercase; }
             .price-col { font-weight: 700; text-align: right; color: #0f172a; }
             .summary-container { display: flex; justify-content: flex-end; margin-bottom: 50px; page-break-inside: avoid; }
             .total-box { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px 24px; min-width: 260px; text-align: right; }
@@ -248,11 +301,11 @@ export default function Financas() {
                 ${itens?.map(item => `
                   <tr>
                     <td>
-                      <div class="eq-name">${item.marca}${item.modelo}</div>
+                      <div class="eq-name">${item.marca}${item.modelo || ''}</div>
                       <div class="eq-serial">S/N: ${item.serial}</div>
                     </td>
                     <td><div class="client-name">${item.cliente}</div></td>
-                    <td class="price-col">R$ 70,00</td>
+                    <td class="price-col">R$ ${(item.valor || 70).toFixed(2)}</td>
                   </tr>
                 `).join('') || ''}
               </tbody>
@@ -394,7 +447,7 @@ export default function Financas() {
                 <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Descrição do Gasto</label>
                 <input 
                   type="text" 
-                  placeholder="Ex: Guia MEI, Graxa de Silicone..."
+                  placeholder="Ex: guia mei, graxa k30..."
                   value={novaDespesa.descricao}
                   onChange={(e) => setNovaDespesa({...novaDespesa, descricao: e.target.value})}
                   className="w-full mt-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-medium focus:outline-none focus:border-blue-500 text-slate-200"
@@ -441,10 +494,10 @@ export default function Financas() {
             </h3>
             <div className="space-y-3 max-h-[220px] overflow-y-auto pr-2">
               {dadosFiltrados.rankingClientes.map((cli, idx) => (
-                <div key={idx} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                <div key={`cli-${idx}-${cli.nome}`} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
                   <div>
                     <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.5 rounded font-black mr-2">#{idx + 1}</span>
-                    <span className="font-bold text-slate-700 text-xs uppercase">{cli.nome}</span>
+                    <span className="font-bold text-slate-700 text-xs capitalize">{cli.nome}</span>
                   </div>
                   <span className="font-black text-slate-800 text-xs">R$ {cli.total.toFixed(2)}</span>
                 </div>
@@ -494,7 +547,7 @@ export default function Financas() {
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[500px] pr-2">
             {/* RENDERIZAÇÃO DE NOTAS DE SERVIÇOS */}
             {abaAtiva !== 'despesas' && listaExibida.map((nota) => (
-              <div key={nota.id} className="p-4 border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all rounded-2xl flex justify-between items-center gap-4">
+              <div key={nota.uniqueKey} className="p-4 border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-all rounded-2xl flex justify-between items-center gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider text-white ${
@@ -502,8 +555,8 @@ export default function Financas() {
                     }`}>
                       {nota.status === 'faturado' ? `Faturado em ${nota.data_formatada}` : `Gerado em ${nota.data_formatada}`}
                     </span>
-                    <span className="text-[10px] font-mono text-slate-400 font-bold">ID: {nota.id.substring(0, 8).toUpperCase()}</span>
-                    <span className="text-xs font-bold text-blue-600">({nota.qtd_itens} {nota.qtd_itens === 1 ? 'item' : 'itens'})</span>
+                    <span className="text-[10px] font-mono text-slate-400 font-bold">ID: {String(nota.id).substring(0, 8).toUpperCase()}</span>
+                    <span className="text-xs font-bold text-blue-600">({nota.qtd_itens || nota.servicos?.length || 0} {nota.qtd_itens === 1 ? 'item' : 'itens'})</span>
                   </div>
                   <p className="text-xs text-slate-500 truncate max-w-sm sm:max-w-md">
                     {nota.servicos?.map(s => `${s.marca} (${s.cliente})`).join(', ')}
@@ -511,7 +564,7 @@ export default function Financas() {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="font-black text-slate-800 text-sm mr-2">R$ {nota.valor_total?.toFixed(2)}</span>
+                  <span className="font-black text-slate-800 text-sm mr-2">R$ {Number(nota.valor_total || 0).toFixed(2)}</span>
                   {nota.status !== 'faturado' && (
                     <button
                       onClick={() => faturarNota(nota.id)}
@@ -524,6 +577,7 @@ export default function Financas() {
                   <button
                     onClick={() => executarReimpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso || nota.data_formatada, nota.status)}
                     className="p-2 bg-white border border-slate-200 rounded-xl text-slate-600 hover:text-blue-600 hover:bg-blue-50 transition-all"
+                    title="Reimprimir Nota"
                   >
                     <Printer size={14} />
                   </button>
@@ -533,7 +587,7 @@ export default function Financas() {
 
             {/* RENDERIZAÇÃO DA ABA DE GASTOS */}
             {abaAtiva === 'despesas' && dadosFiltrados.listaDespesas.map((desp) => (
-              <div key={desp.id} className="p-4 border border-slate-100 bg-rose-50/20 hover:bg-rose-50/40 transition-all rounded-2xl flex justify-between items-center">
+              <div key={desp.uniqueKey} className="p-4 border border-slate-100 bg-rose-50/20 hover:bg-rose-50/40 transition-all rounded-2xl flex justify-between items-center">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black px-2 py-0.5 rounded uppercase tracking-wider text-rose-700 bg-rose-100 border border-rose-200">
@@ -541,9 +595,18 @@ export default function Financas() {
                     </span>
                     <span className="text-[11px] font-bold text-slate-400">{desp.data_formatada}</span>
                   </div>
-                  <p className="font-bold text-slate-700 text-sm uppercase">{desp.descricao}</p>
+                  <p className="font-bold text-slate-700 text-sm">{desp.descricao}</p>
                 </div>
-                <span className="font-black text-rose-600 text-sm font-mono">- R$ {desp.valor.toFixed(2)}</span>
+                <div className="flex items-center gap-3">
+                  <span className="font-black text-rose-600 text-sm font-mono">R$ {Number(desp.valor || 0).toFixed(2)}</span>
+                  <button
+                    onClick={() => excluirDespesa(desp.id)}
+                    className="p-2 bg-white border border-slate-200 hover:border-rose-200 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-all"
+                    title="Excluir Gasto"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
             ))}
 

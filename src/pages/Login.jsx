@@ -1,23 +1,34 @@
 import { useState } from 'react';
-import { auth } from '../firebase/config';
-import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { api } from '../services/api';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     const loadingToast = toast.loading('Autenticando...');
+
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      // Chama o método centralizado do api.js
+      const data = await api.login(usuario, password);
+
+      // Guarda as informações de sessão no navegador de forma compatível com o ProtectedRoute e Sidebar
+      if (data && data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+        localStorage.setItem('usuario', JSON.stringify(data.user)); // Compatibilidade com outras telas
+        localStorage.setItem('token', 'ativo'); // Garante que o token existe para o ProtectedRoute
+      } else {
+        throw new Error('Dados de usuário inválidos retornados pela API.');
+      }
+
       toast.success('Acesso autorizado! Bem-vindo.', { id: loadingToast });
-      navigate('/home');
+      navigate('/home', { replace: true });
     } catch (error) {
-      toast.error('Falha no login. Verifique e-mail e senha.', { id: loadingToast });
+      toast.error(error.message || 'Falha no login. Verifique as credenciais.', { id: loadingToast });
     }
   };
 
@@ -33,20 +44,26 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-5">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">E-mail Corporativo</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">
+              Usuário / E-mail
+            </label>
             <input 
-              type="email" 
+              type="text" 
               required
-              className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-              onChange={(e) => setEmail(e.target.value)}
+              value={usuario}
+              className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800"
+              onChange={(e) => setUsuario(e.target.value)}
             />
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">Senha</label>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1 ml-1">
+              Senha
+            </label>
             <input 
               type="password" 
               required
-              className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+              value={password}
+              className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-slate-800"
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>

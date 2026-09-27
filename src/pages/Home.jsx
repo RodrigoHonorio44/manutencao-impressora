@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, onSnapshot } from 'firebase/firestore';
 import { Printer, Clock, CheckCircle2, PackageCheck, PlusCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { api } from '../services/api';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -15,62 +14,74 @@ export default function Home() {
   const [ultimasImpressoras, setUltimasImpressoras] = useState([]);
 
   useEffect(() => {
-    // Escuta toda a coleção 'atendimentos' para evitar erros de índice do Firestore
-    const unsubscribeAtendimentos = onSnapshot(collection(db, "atendimentos"), (snapshot) => {
-      const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    async function carregarDados() {
+      try {
+        // Busca os dados utilizando a API centralizada
+        const docs = await api.getAtendimentos();
+        const estoque = await api.getEstoque();
 
-      // 1. Equipamentos na Bancada
-      const bancada = docs.filter(d => d.status === 'Em Análise' || d.status === 'Em Manutenção').length;
+        if (Array.isArray(docs)) {
+          // Equipamentos Na Bancada
+          const bancada = docs.filter(
+            d => d.status === 'Em Análise' || d.status === 'Em Manutenção'
+          ).length;
 
-      // 2. Aguardando Peça
-      const aguardando = docs.filter(d => d.status === 'Aguardando Peça').length;
+          // Aguardando Peça
+          const aguardando = docs.filter(
+            d => d.status === 'Aguardando Peça'
+          ).length;
 
-      // 3. Concluídos no Mês Atual
-      const agora = new Date();
-      const anoAtual = agora.getFullYear();
-      const mesAtual = agora.getMonth();
+          // Concluídos no Mês Atual
+          const agora = new Date();
+          const anoAtual = agora.getFullYear();
+          const mesAtual = agora.getMonth();
 
-      const concluidos = docs.filter(d => {
-        const statusValido = d.status === 'Finalizado' || d.status === 'Faturado' || d.status === 'Pronto';
-        
-        if (!statusValido) return false;
+          const concluidos = docs.filter(d => {
+            const statusValido =
+              d.status === 'Finalizado' ||
+              d.status === 'Faturado' ||
+              d.status === 'Pronto';
 
-        // Se houver data de finalização, valida se foi neste mês
-        if (d.data_finalizacao?.seconds) {
-          const dataFinal = new Date(d.data_finalizacao.seconds * 1000);
-          return dataFinal.getFullYear() === anoAtual && dataFinal.getMonth() === mesAtual;
+            if (!statusValido) return false;
+
+            // Validação de data de finalização
+            if (d.data_finalizacao) {
+              const dataFinal = new Date(d.data_finalizacao);
+              return (
+                dataFinal.getFullYear() === anoAtual &&
+                dataFinal.getMonth() === mesAtual
+              );
+            }
+
+            return true;
+          }).length;
+
+          // Últimas impressoras ativas na bancada
+          const ativos = docs.filter(
+            d => d.status !== 'Finalizado' && d.status !== 'Faturado'
+          );
+
+          const ordenadas = ativos.sort((a, b) => {
+            const dataA = a.data_entrada ? new Date(a.data_entrada) : 0;
+            const dataB = b.data_entrada ? new Date(b.data_entrada) : 0;
+            return dataB - dataA;
+          });
+
+          setUltimasImpressoras(ordenadas.slice(0, 5));
+
+          setEstatisticas({
+            naBancada: bancada,
+            aguardandoPeca: aguardando,
+            concluidosMes: concluidos,
+            itensEstoque: Array.isArray(estoque) ? estoque.length : 0
+          });
         }
+      } catch (error) {
+        console.error('Erro ao carregar dados do painel:', error);
+      }
+    }
 
-        // Se o status for concluído/faturado mas não tiver data_finalizacao registrada, inclui por segurança
-        return true;
-      }).length;
-
-      // Atualiza o estado
-      setEstatisticas(prev => ({
-        ...prev,
-        naBancada: bancada,
-        aguardandoPeca: aguardando,
-        concluidosMes: concluidos
-      }));
-
-      // 4. Últimas impressoras ativas na bancada
-      const ativos = docs.filter(d => d.status !== 'Finalizado' && d.status !== 'Faturado');
-      const ordenadas = ativos.sort((a, b) => (b.data_entrada?.seconds || 0) - (a.data_entrada?.seconds || 0));
-      setUltimasImpressoras(ordenadas.slice(0, 5));
-    });
-
-    // Escuta o estoque de peças
-    const unsubscribeEstoque = onSnapshot(collection(db, "estoque_pecas"), (snapshot) => {
-      setEstatisticas(prev => ({
-        ...prev,
-        itensEstoque: snapshot.docs.length
-      }));
-    });
-
-    return () => {
-      unsubscribeAtendimentos();
-      unsubscribeEstoque();
-    };
+    carregarDados();
   }, []);
 
   return (
@@ -138,7 +149,7 @@ export default function Home() {
             {ultimasImpressoras.length > 0 ? (
               <div className="divide-y divide-slate-100">
                 {ultimasImpressoras.map((item) => (
-                  <div key={item.id} className="py-3 flex items-center justify-between gap-4">
+                  <div key={item._id || item.id} className="py-3 flex items-center justify-between gap-4">
                     <div>
                       <p className="text-xs font-bold text-blue-600 uppercase italic">{item.marca} {item.modelo}</p>
                       <p className="text-sm font-bold text-slate-800 capitalize">{item.cliente}</p>

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, query, where, getDocs, orderBy, limit, runTransaction, doc, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import { Gauge, History } from 'lucide-react';
+// Substitua pelo seu módulo ou arquivo de serviços da API
+import api from '../services/api'; 
 
 export default function ModalBaixa({ chamado, onClose }) {
   const [pecasCompativeis, setPecasCompativeis] = useState([]);
@@ -13,41 +13,32 @@ export default function ModalBaixa({ chamado, onClose }) {
   useEffect(() => {
     const buscarDados = async () => {
       try {
-        // 1. Busca o último contador registrado deste mesmo serial (S/N)
+        // 1. Busca o último contador registrado deste mesmo serial (S/N) via API
         if (chamado?.serial) {
           const serialLimpo = chamado.serial.toLowerCase().trim();
-          const qHistorico = query(
-            collection(db, "atendimentos"),
-            where("serial_lc", "==", serialLimpo),
-            where("status", "==", "Finalizado"),
-            orderBy("data_finalizacao", "desc"),
-            limit(2)
-          );
-
-          const snapHist = await getDocs(qHistorico);
-          const docsHist = snapHist.docs.map(d => d.data());
-          const osAnterior = docsHist.find(d => d.contador_final && d.os !== chamado.os);
-
-          if (osAnterior) {
-            setUltimoContador(osAnterior.contador_final);
+          const responseHist = await api.get(`/atendimentos/historico-serial`, {
+            params: { serial: serialLimpo, osAtual: chamado.os }
+          });
+          
+          if (responseHist.data && responseHist.data.ultimoContador) {
+            setUltimoContador(responseHist.data.ultimoContador);
           }
         }
 
-        // 2. Filtra peças compatíveis
+        // 2. Filtra peças compatíveis via API
         const termoModelo = chamado.modelo.split('-')[0].trim().toLowerCase();
-        const qPecas = query(
-          collection(db, "estoque_pecas"), 
-          where("modelo", ">=", termoModelo) 
-        );
+        const responsePecas = await api.get(`/estoque/pecas`, {
+          params: { modelo: termoModelo }
+        });
 
-        const querySnapshot = await getDocs(qPecas);
-        const lista = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        const lista = responsePecas.data || [];
 
         // Filtro inteligente para exibir apenas itens com estoque
         const apenasComEstoque = lista.filter(peca => peca.qtd > 0);
         setPecasCompativeis(apenasComEstoque);
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
+        toast.error("Erro ao carregar informações para baixa.");
       } finally {
         setCarregando(false);
       }
@@ -71,49 +62,23 @@ export default function ModalBaixa({ chamado, onClose }) {
     if (peca.qtd <= 0) return toast.error("Peça sem saldo no estoque!");
 
     const loading = toast.loading("Processando baixa...");
-    const pecaRef = doc(db, "estoque_pecas", peca.id);
-    const chamadoRef = doc(db, "atendimentos", chamado.id);
-    const historicoRef = doc(collection(db, "historico_lotes_zerados"));
 
     try {
-      await runTransaction(db, async (transaction) => {
-        const pecaDoc = await transaction.get(pecaRef);
-        if (!pecaDoc.exists()) throw "Peça não encontrada!";
-
-        const dadosPeca = pecaDoc.data();
-        const novaQtd = dadosPeca.qtd - 1;
-
-        if (novaQtd <= 0) {
-          transaction.set(historicoRef, {
-            marca: (dadosPeca.marca || '').toLowerCase().trim(),
-            modelo: (dadosPeca.modelo || '').toLowerCase().trim(),
-            nome: (dadosPeca.nome || '').toLowerCase().trim(),
-            qtd: 0,
-            data_entrada: dadosPeca.data_entrada, 
-            data_fim: serverTimestamp()          
-          });
-
-          transaction.delete(pecaRef);
-        } else {
-          transaction.update(pecaRef, { qtd: novaQtd });
-        }
-
-        transaction.update(chamadoRef, { 
-          status: 'Finalizado',
-          peca_utilizada: peca.nome ? peca.nome.toLowerCase().trim() : '',
-          contador_final: Number(contadorFinal),
-          ultimo_contador_anterior: ultimoContador || null,
-          paginas_rodadas: paginasRodadas,
-          serial_lc: (chamado.serial || '').toLowerCase().trim(),
-          data_finalizacao: serverTimestamp() 
-        });
+      // Chamada à API para efetuar a baixa e atualizar a manutenção
+      await api.post(`/atendimentos/${chamado.id}/baixa`, {
+        pecaId: peca.id,
+        pecaNome: peca.nome ? peca.nome.toLowerCase().trim() : '',
+        contadorFinal: Number(contadorFinal),
+        ultimoContadorAnterior: ultimoContador || null,
+        paginasRodadas: paginasRodadas,
+        serial: (chamado.serial || '').toLowerCase().trim()
       });
 
       toast.success(`Baixa de ${peca.nome} realizada com sucesso!`, { id: loading });
       onClose();
     } catch (e) {
       console.error(e);
-      toast.error("Erro ao processar baixa.", { id: loading });
+      toast.error(e.response?.data?.message || "Erro ao processar baixa.", { id: loading });
     }
   };
 

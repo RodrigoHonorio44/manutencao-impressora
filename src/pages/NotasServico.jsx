@@ -1,140 +1,96 @@
-import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, query, where, onSnapshot, doc, writeBatch, serverTimestamp, orderBy, limit, startAfter, getDocs, updateDoc } from 'firebase/firestore';
-import { Printer, CheckCircle2, ReceiptText, Calendar, History, ChevronLeft, ChevronRight, FileText } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { api } from '../services/api';
+import { Printer, CheckCircle2, ReceiptText, Calendar, History, ChevronLeft, ChevronRight, FileText, Clock } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function NotasServico() {
   const [finalizadas, setFinalizadas] = useState([]);
   const [selecionadas, setSelecionadas] = useState([]);
+  const [cortesias, setCortesias] = useState([]);
+  
+  // Estados de Paginação da Aba Pendentes
+  const [paginaPendentes, setPaginaPendentes] = useState(1);
+  const ITENS_POR_PAGINA = 10;
   
   // Estados do Histórico e Paginação
   const [historico, setHistorico] = useState([]);
-  const [primeiroDoc, setPrimeiroDoc] = useState(null);
-  const [ultimoDoc, setUltimoDoc] = useState(null);
-  const [pontesDePaginas, setPontesDePaginas] = useState([]);
   const [paginaAtual, setPaginaAtual] = useState(1);
-  const [temMais, setTemMais] = useState(false);
+  const [totalPaginas, setTotalPaginas] = useState(1);
+  const [carregando, setCarregando] = useState(false);
   
   const [abaAtiva, setAbaAtiva] = useState('pendentes');
   const [statusFiltroHistorico, setStatusFiltroHistorico] = useState('gerado');
-  const ITENS_POR_PAGINA = 10;
 
-  // 1. Monitora atendimentos prontos em tempo real
-  useEffect(() => {
-    const qAtendimentos = query(collection(db, "atendimentos"), where("status", "==", "Finalizado"));
-    const unsubscribeAtendimentos = onSnapshot(qAtendimentos, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setFinalizadas(data);
-    }, (error) => {
-      console.error("Erro no Firebase Atendimentos:", error);
-      toast.error("Erro ao carregar dados ativos.");
-    });
+  // Helper para obter o ID único de cada item
+  const getItemId = (item) => item._id || item.id;
 
-    return () => unsubscribeAtendimentos();
-  }, []);
-
-  // 2. Carrega o histórico ao mudar de aba ou alternar o filtro interno
-  useEffect(() => {
-    if (abaAtiva === 'historico') {
-      carregarPrimeiraPaginaHistorico();
+  // Formata datas de forma segura
+  const formatarData = (dataInput) => {
+    if (!dataInput) return '---';
+    let dataObj;
+    if (typeof dataInput === 'object' && dataInput.$date) {
+      dataObj = new Date(dataInput.$date);
+    } else {
+      dataObj = new Date(dataInput);
     }
-  }, [abaAtiva, statusFiltroHistorico]);
+    return isNaN(dataObj.getTime()) ? '---' : dataObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
 
-  const carregarPrimeiraPaginaHistorico = async () => {
+  // 1. Carrega OSs finalizadas consumindo api.getAtendimentos() com ordenação CRESCENTE (Antiga -> Recente)
+  const carregarAtendimentosFinalizados = async () => {
     try {
-      const q = query(
-        collection(db, "historico_notas"), 
-        where("status", "==", statusFiltroHistorico),
-        orderBy("data_fechamento", "desc"), 
-        limit(ITENS_POR_PAGINA + 1)
-      );
+      const data = await api.getAtendimentos();
       
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        setHistorico([]);
-        setTemMais(false);
-        setPontesDePaginas([]);
-        return;
-      }
+      // Filtra apenas as que estão com status Finalizado
+      const prontas = data.filter(item => (item.status || '').toLowerCase() === 'finalizado');
 
-      const docs = snapshot.docs;
-      const temProxima = docs.length > ITENS_POR_PAGINA;
-      const docsVisualizar = temProxima ? docs.slice(0, ITENS_POR_PAGINA) : docs;
+      // Ordena por data crescente (mais antiga primeiro / 01/09 até 30/09)
+      prontas.sort((a, b) => {
+        const getMillis = (d) => {
+          if (!d) return 0;
+          if (typeof d === 'object' && d.$date) return new Date(d.$date).getTime();
+          return new Date(d).getTime() || 0;
+        };
+        const dataA = getMillis(a.data_finalizacao || a.data_entrada || a.criadoEm);
+        const dataB = getMillis(b.data_finalizacao || b.data_entrada || b.criadoEm);
+        return dataA - dataB;
+      });
 
-      setHistorico(docsVisualizar.map(doc => ({ id: doc.id, ...doc.data() })));
-      setPrimeiroDoc(docsVisualizar[0]);
-      setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
-      setPontesDePaginas([docsVisualizar[0]]);
-      setPaginaAtual(1);
-      setTemMais(temProxima);
+      setFinalizadas(prontas);
+    } catch (error) {
+      console.error("Erro ao carregar atendimentos:", error);
+      toast.error("Erro ao carregar OSs prontas.");
+    }
+  };
+
+  // 2. Carrega o histórico consumindo api.getHistoricoNotas()
+  const carregarHistorico = useCallback(async (pagina = 1) => {
+    setCarregando(true);
+    try {
+      const data = await api.getHistoricoNotas(statusFiltroHistorico, pagina, ITENS_POR_PAGINA);
+      setHistorico(data.docs || data.itens || (Array.isArray(data) ? data : []));
+      setTotalPaginas(data.totalPages || Math.ceil((data.total || 0) / ITENS_POR_PAGINA) || 1);
+      setPaginaAtual(pagina);
     } catch (error) {
       console.error("Erro ao carregar histórico:", error);
-      toast.error("Erro ao carregar histórico.");
+      toast.error("Erro ao carregar histórico de notas.");
+    } finally {
+      setCarregando(false);
     }
-  };
+  }, [statusFiltroHistorico]);
 
-  const proximaPagina = async () => {
-    if (!temMais || !ultimoDoc) return;
-
-    try {
-      const q = query(
-        collection(db, "historico_notas"),
-        where("status", "==", statusFiltroHistorico),
-        orderBy("data_fechamento", "desc"),
-        startAfter(ultimoDoc),
-        limit(ITENS_POR_PAGINA + 1)
-      );
-
-      const snapshot = await getDocs(q);
-      const docs = snapshot.docs;
-      
-      if (docs.length === 0) return;
-
-      const temProxima = docs.length > ITENS_POR_PAGINA;
-      const docsVisualizar = temProxima ? docs.slice(0, ITENS_POR_PAGINA) : docs;
-
-      setHistorico(docsVisualizar.map(doc => ({ id: doc.id, ...doc.data() })));
-      setPrimeiroDoc(docsVisualizar[0]);
-      setUltimoDoc(docsVisualizar[docsVisualizar.length - 1]);
-      
-      setPontesDePaginas(prev => [...prev, docsVisualizar[0]]);
-      setPaginaAtual(prev => prev + 1);
-      setTemMais(temProxima);
-    } catch (error) {
-      console.error("Erro ao avançar página:", error);
+  useEffect(() => {
+    if (abaAtiva === 'pendentes') {
+      carregarAtendimentosFinalizados();
+    } else if (abaAtiva === 'historico') {
+      carregarHistorico(1);
     }
-  };
+  }, [abaAtiva, statusFiltroHistorico, carregarHistorico]);
 
-  const paginaAnterior = async () => {
-    if (paginaAtual === 1) return;
-
-    try {
-      const docAlvo = pontesDePaginas[paginaAtual - 2];
-
-      const qRefatorada = query(
-        collection(db, "historico_notas"),
-        where("status", "==", statusFiltroHistorico),
-        orderBy("data_fechamento", "desc"),
-        ...[docAlvo ? require('firebase/firestore').startAt(docAlvo) : null].filter(Boolean),
-        limit(ITENS_POR_PAGINA)
-      );
-
-      const snapshot = await getDocs(qRefatorada);
-      const docs = snapshot.docs;
-
-      setHistorico(docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      setPrimeiroDoc(docs[0]);
-      setUltimoDoc(docs[docs.length - 1]);
-      
-      setPontesDePaginas(prev => prev.slice(0, -1));
-      setPaginaAtual(prev => prev - 1);
-      setTemMais(true);
-    } catch (error) {
-      console.error("Erro ao voltar página:", error);
-    }
-  };
+  // Cálculos de paginação da aba pendentes (10 por tela)
+  const totalPaginasPendentes = Math.ceil(finalizadas.length / ITENS_POR_PAGINA) || 1;
+  const indiceInicio = (paginaPendentes - 1) * ITENS_POR_PAGINA;
+  const finalizadasPaginadas = finalizadas.slice(indiceInicio, indiceInicio + ITENS_POR_PAGINA);
 
   const toggleSelecao = (id) => {
     setSelecionadas(prev => 
@@ -146,8 +102,21 @@ export default function NotasServico() {
     if (selecionadas.length === finalizadas.length) {
       setSelecionadas([]);
     } else {
-      setSelecionadas(finalizadas.map(item => item.id));
+      setSelecionadas(finalizadas.map(item => getItemId(item)));
     }
+  };
+
+  const toggleCortesia = (id, e) => {
+    e.stopPropagation();
+    setCortesias(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const calcularValorOS = (id) => (cortesias.includes(id) ? 0 : 70);
+
+  const calcularTotalSelecionadas = () => {
+    return selecionadas.reduce((acc, id) => acc + calcularValorOS(id), 0);
   };
 
   const ejecutarImpressaoHTML = (itens, total, dataNota, statusNota) => {
@@ -262,7 +231,12 @@ export default function NotasServico() {
                         }
                       </div>
                     </td>
-                    <td class="price-col">R$ 70,00</td>
+                    <td class="price-col">
+                      ${item.eh_cortesia || item.valor === 0 
+                        ? '<span style="color: #9333ea;">R$ 0,00 (Cortesia)</span>' 
+                        : `R$ ${(item.valor ?? 70).toFixed(2)}`
+                      }
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -302,50 +276,50 @@ export default function NotasServico() {
   };
 
   const gerarNotaEGuardarNoHistorico = async () => {
-    const itens = finalizadas.filter(f => selecionadas.includes(f.id));
+    const itens = finalizadas.filter(f => selecionadas.includes(getItemId(f)));
     if (itens.length === 0) return toast.error("Selecione ao menos um serviço!");
 
-    const total = itens.length * 70;
+    const total = calcularTotalSelecionadas();
 
-    // Confirmação para evitar geração por clique acidental
     const confirmou = window.confirm(
       `Deseja gerar a nota de serviço no valor total de R$ ${total.toFixed(2)} referente a ${itens.length} ordem(ns) selecionada(s)?`
     );
 
     if (!confirmou) return;
 
-    const loading = toast.loading("Salvando nota e atualizando atendimentos...");
+    const loading = toast.loading("Salvando nota na base de dados...");
     const dataAtualString = new Date().toLocaleDateString('pt-BR');
 
     try {
-      const batch = writeBatch(db);
-      const novaNotaRef = doc(collection(db, "historico_notas"));
-      
-      batch.set(novaNotaRef, {
-        status: "gerado", 
-        data_fechamento: serverTimestamp(),
+      const payload = {
+        atendimento_ids: selecionadas,
+        status: "gerado",
         data_extenso: dataAtualString,
         valor_total: total,
         qtd_itens: itens.length,
-        servicos: itens.map(item => ({
-          marca: item.marca,
-          modelo: item.modelo,
-          serial: item.serial,
-          cliente: item.cliente,
-          pecas_utilizadas: item.pecas_utilizadas || []
-        }))
-      });
+        servicos: itens.map(item => {
+          const id = getItemId(item);
+          return {
+            atendimento_id: id,
+            marca: item.marca,
+            modelo: item.modelo,
+            serial: item.serial,
+            cliente: item.cliente,
+            eh_cortesia: cortesias.includes(id),
+            valor: calcularValorOS(id),
+            pecas_utilizadas: item.pecas_utilizadas || []
+          };
+        })
+      };
 
-      itens.forEach(item => {
-        const atendimentoRef = doc(db, "atendimentos", item.id);
-        batch.update(atendimentoRef, { status: "Faturado" });
-      });
+      await api.criarNotaServico(payload);
 
-      await batch.commit();
-      toast.success("Nota gerada com sucesso! Disponível em Guardadas para envio.", { id: loading });
+      toast.success("Nota gerada com sucesso!", { id: loading });
       
       setSelecionadas([]);
-      if (abaAtiva === 'historico') carregarPrimeiraPaginaHistorico();
+      setCortesias([]);
+      carregarAtendimentosFinalizados();
+      if (abaAtiva === 'historico') carregarHistorico(1);
     } catch (error) {
       console.error("Erro ao processar faturamento:", error);
       toast.error("Erro ao faturar e salvar nota.", { id: loading });
@@ -353,17 +327,13 @@ export default function NotasServico() {
   };
 
   const confirmarPagamentoNota = async (id) => {
-    const confirmacao = window.confirm("Deseja confirmar o pagamento desta nota? Ela será arquivada e computada nas Finanças.");
+    const confirmacao = window.confirm("Deseja confirmar o pagamento desta nota?");
     if (!confirmacao) return;
 
     try {
-      const notaRef = doc(db, "historico_notas", id);
-      await updateDoc(notaRef, {
-        status: 'faturado',
-        data_faturamento: serverTimestamp() 
-      });
-      toast.success("Pagamento baixado com sucesso! Nota enviada ao histórico de pagas.");
-      carregarPrimeiraPaginaHistorico();
+      await api.faturarNota(id);
+      toast.success("Pagamento baixado com sucesso!");
+      carregarHistorico(paginaAtual);
     } catch (error) {
       console.error("Erro ao confirmar pagamento:", error);
       toast.error("Não foi possível registrar o pagamento.");
@@ -383,7 +353,7 @@ export default function NotasServico() {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
             <div className="text-left sm:text-right">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total Geral</p>
-              <p className="text-2xl font-black text-emerald-600">R$ {(selecionadas.length * 70).toFixed(2)}</p>
+              <p className="text-2xl font-black text-emerald-600">R$ {calcularTotalSelecionadas().toFixed(2)}</p>
             </div>
             <button 
               onClick={gerarNotaEGuardarNoHistorico}
@@ -395,7 +365,7 @@ export default function NotasServico() {
         )}
       </header>
 
-      {/* ABAS DO TOPO COM ROLAGEM HORIZONTAL NO MOBILE */}
+      {/* ABAS DO TOPO */}
       <div className="flex border-b border-slate-200 gap-4 overflow-x-auto pb-1 scrollbar-none">
         <button 
           onClick={() => setAbaAtiva('pendentes')}
@@ -413,58 +383,118 @@ export default function NotasServico() {
 
       {/* ABA 1: OS PENDENTES */}
       {abaAtiva === 'pendentes' && (
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[600px]">
-              <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                <tr>
-                  <th className="p-4 md:p-5 w-10 text-center">
-                    <div 
-                      onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
-                      className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${finalizadas.length > 0 && selecionadas.length === finalizadas.length ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
-                    >
-                      {finalizadas.length > 0 && selecionadas.length === finalizadas.length && <CheckCircle2 size={16} className="text-white" />}
-                    </div>
-                  </th>
-                  <th className="p-4 md:p-5">Equipamento / Origem</th>
-                  <th className="p-4 md:p-5">Peças / Serviços</th>
-                  <th className="p-4 md:p-5 text-right">Valor</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {finalizadas.map(item => (
-                  <tr 
-                    key={item.id} 
-                    onClick={() => toggleSelecao(item.id)}
-                    className={`cursor-pointer transition-all ${selecionadas.includes(item.id) ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
-                  >
-                    <td className="p-4 md:p-5">
-                      <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${selecionadas.includes(item.id) ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
-                        {selecionadas.includes(item.id) && <CheckCircle2 size={16} className="text-white" />}
+        <div className="space-y-4">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left min-w-[600px]">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase tracking-widest">
+                  <tr>
+                    <th className="p-4 md:p-5 w-10 text-center">
+                      <div 
+                        onClick={(e) => { e.stopPropagation(); toggleSelecionarTodos(); }}
+                        className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${finalizadas.length > 0 && selecionadas.length === finalizadas.length ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}
+                      >
+                        {finalizadas.length > 0 && selecionadas.length === finalizadas.length && <CheckCircle2 size={16} className="text-white" />}
                       </div>
-                    </td>
-                    <td className="p-4 md:p-5">
-                      <p className="font-bold text-slate-800">{item.marca} {item.modelo}</p>
-                      <p className="text-xs text-slate-400">S/N: {item.serial} | <span className="text-blue-600 font-bold">{item.cliente}</span></p>
-                    </td>
-                    <td className="p-4 md:p-5">
-                      <div className="flex flex-wrap gap-1">
-                        {item.pecas_utilizadas?.length > 0 ? item.pecas_utilizadas.map((p, i) => (
-                          <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">{p}</span>
-                        )) : <span className="text-[10px] text-slate-400 italic font-medium">Ajuste técnico</span>}
-                      </div>
-                    </td>
-                    <td className="p-4 md:p-5 text-right font-black text-slate-700 whitespace-nowrap">R$ 70,00</td>
+                    </th>
+                    <th className="p-4 md:p-5">Equipamento / Origem / Conclusão</th>
+                    <th className="p-4 md:p-5">Peças / Relatório Técnico</th>
+                    <th className="p-4 md:p-5 text-right">Valor</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {finalizadasPaginadas.map(item => {
+                    const itemId = getItemId(item);
+                    const estaSelecionado = selecionadas.includes(itemId);
+                    const ehCortesia = cortesias.includes(itemId);
+
+                    return (
+                      <tr 
+                        key={itemId} 
+                        onClick={() => toggleSelecao(itemId)}
+                        className={`cursor-pointer transition-all ${estaSelecionado ? 'bg-blue-50/50' : 'hover:bg-slate-50'}`}
+                      >
+                        <td className="p-4 md:p-5">
+                          <div className={`w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${estaSelecionado ? 'bg-blue-600 border-blue-600' : 'border-slate-300 bg-white'}`}>
+                            {estaSelecionado && <CheckCircle2 size={16} className="text-white" />}
+                          </div>
+                        </td>
+                        <td className="p-4 md:p-5 space-y-1">
+                          <p className="font-bold text-slate-800">{item.marca} {item.modelo}</p>
+                          <p className="text-xs text-slate-400">S/N: {item.serial || 'N/A'} | <span className="text-blue-600 font-bold">{item.cliente}</span></p>
+                          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md w-fit border border-emerald-200">
+                            <Clock size={12} /> Finalizado em: {formatarData(item.data_finalizacao)}
+                          </div>
+                        </td>
+                        <td className="p-4 md:p-5 space-y-2">
+                          <div className="flex flex-wrap gap-1">
+                            {item.pecas_utilizadas?.length > 0 ? item.pecas_utilizadas.map((p, i) => (
+                              <span key={i} className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase">{p}</span>
+                            )) : <span className="text-[10px] text-slate-400 italic font-medium">Ajuste técnico</span>}
+                          </div>
+                          {item.relatorio_tecnico && (
+                            <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                              <strong className="text-slate-700 text-[10px] uppercase block mb-0.5">O que foi feito:</strong>
+                              {item.relatorio_tecnico}
+                            </p>
+                          )}
+                        </td>
+                        <td className="p-4 md:p-5 text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-3">
+                            <button
+                              type="button"
+                              onClick={(e) => toggleCortesia(itemId, e)}
+                              className={`text-[10px] font-black px-2.5 py-1 rounded-lg border transition-all uppercase tracking-wider ${
+                                ehCortesia
+                                  ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200'
+                              }`}
+                            >
+                              {ehCortesia ? 'Cortesia' : '+ Cortesia'}
+                            </button>
+
+                            <span className={`font-black ${ehCortesia ? 'line-through text-slate-300' : 'text-slate-700'}`}>
+                              R$ {calcularValorOS(itemId).toFixed(2)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            
+            {finalizadas.length === 0 && (
+              <div className="p-12 md:p-20 text-center">
+                <ReceiptText size={48} className="mx-auto text-slate-200 mb-2" />
+                <p className="text-slate-400 font-medium">Nenhuma OS pronta para faturamento.</p>
+              </div>
+            )}
           </div>
-          
-          {finalizadas.length === 0 && (
-            <div className="p-12 md:p-20 text-center">
-              <ReceiptText size={48} className="mx-auto text-slate-200 mb-2" />
-              <p className="text-slate-400 font-medium">Nenhuma OS pronta para faturamento.</p>
+
+          {/* BARRA DE PAGINAÇÃO DA ABA PENDENTES */}
+          {finalizadas.length > 0 && (
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <span className="text-xs font-bold text-slate-500">
+                Página <span className="text-slate-800 font-black">{paginaPendentes}</span> de {totalPaginasPendentes} ({finalizadas.length} itens no total)
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+                <button
+                  onClick={() => setPaginaPendentes(prev => Math.max(prev - 1, 1))}
+                  disabled={paginaPendentes === 1}
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaPendentes === 1 ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
+                >
+                  <ChevronLeft size={16} /> Anterior
+                </button>
+                <button
+                  onClick={() => setPaginaPendentes(prev => Math.min(prev + 1, totalPaginasPendentes))}
+                  disabled={paginaPendentes >= totalPaginasPendentes}
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaPendentes >= totalPaginasPendentes ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
+                >
+                  Próxima <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -488,79 +518,89 @@ export default function NotasServico() {
             </button>
           </div>
 
-          {historico.map((nota) => (
-            <div key={nota.id} className="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition-all">
-              <div className="space-y-2 flex-1 w-full">
-                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                  <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-md text-white uppercase ${nota.status === 'faturado' ? 'bg-emerald-600' : 'bg-amber-500'}`}>
-                    <Calendar size={12} /> {nota.status === 'faturado' ? 'Liquidada' : 'Aguardando Pagamento'} ({nota.data_extenso})
-                  </span>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-                    REF ID: {nota.id.substring(0, 8).toUpperCase()}
-                  </span>
-                  <span className="text-xs font-bold text-blue-600">
-                    ({nota.qtd_itens} {nota.qtd_itens === 1 ? 'Equipamento' : 'Equipamentos'})
-                  </span>
-                </div>
-                
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
-                  {nota.servicos?.map((s, idx) => (
-                    <div key={idx} className="text-xs text-slate-600 flex flex-col sm:flex-row justify-between gap-1 sm:gap-0">
-                      <span>• <strong className="text-slate-800">{s.marca} {s.modelo}</strong> ({s.cliente}) — S/N: {s.serial}</span>
-                      <span className="text-[10px] font-mono text-slate-400 uppercase">
-                        {s.pecas_utilizadas?.length > 0 ? s.pecas_utilizadas.join(', ') : 'Preventiva'}
+          {carregando ? (
+            <div className="p-12 text-center text-slate-400 font-bold">Carregando dados...</div>
+          ) : (
+            historico.map((nota) => {
+              const notaId = getItemId(nota);
+              return (
+                <div key={notaId} className="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition-all">
+                  <div className="space-y-2 flex-1 w-full">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      <span className={`flex items-center gap-1 text-[10px] font-black px-2.5 py-1 rounded-md text-white uppercase ${nota.status === 'faturado' ? 'bg-emerald-600' : 'bg-amber-500'}`}>
+                        <Calendar size={12} /> {nota.status === 'faturado' ? 'Liquidada' : 'Aguardando Pagamento'} ({nota.data_extenso})
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                        REF ID: {String(notaId).substring(0, 8).toUpperCase()}
+                      </span>
+                      <span className="text-xs font-bold text-blue-600">
+                        ({nota.qtd_itens} {nota.qtd_itens === 1 ? 'Equipamento' : 'Equipamentos'})
                       </span>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 space-y-1.5">
+                      {nota.servicos?.map((s, idx) => (
+                        <div key={idx} className="text-xs text-slate-600 flex flex-col sm:flex-row justify-between gap-1 sm:gap-0">
+                          <span>
+                            <strong className="text-slate-800">{s.marca} {s.modelo}</strong> ({s.cliente}) — S/N: {s.serial}
+                            {s.eh_cortesia && <span className="ml-2 text-[10px] font-bold text-purple-600 uppercase">(Cortesia)</span>}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400 uppercase">
+                            {s.pecas_utilizadas?.length > 0 ? s.pecas_utilizadas.join(', ') : 'Preventiva'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
-              <div className="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 min-w-[170px]">
-                <div className="text-left md:text-right">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Valor do Lote</p>
-                  <p className="text-lg md:text-xl font-black text-slate-800">R$ {nota.valor_total?.toFixed(2)}</p>
+                  <div className="flex flex-row md:flex-col items-center md:items-end justify-between w-full md:w-auto gap-2 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100 min-w-[170px]">
+                    <div className="text-left md:text-right">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Valor do Lote</p>
+                      <p className="text-lg md:text-xl font-black text-slate-800">R$ {Number(nota.valor_total || 0).toFixed(2)}</p>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      {nota.status !== 'faturado' && (
+                        <button 
+                          onClick={() => confirmarPagamentoNota(notaId)}
+                          className="flex items-center gap-1 bg-amber-50 hover:bg-emerald-600 text-amber-700 hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-lg border border-amber-200 hover:border-emerald-600 transition-all uppercase tracking-wide"
+                          title="Confirmar Recebimento"
+                        >
+                          <CheckCircle2 size={13} /> Confirmar Pago
+                        </button>
+                      )}
+                      
+                      <button 
+                        onClick={() => ejecutarImpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso, nota.status)}
+                        className="flex items-center gap-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-600 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all uppercase tracking-wide"
+                      >
+                        <Printer size={13} /> Imprimir Via
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                
-                <div className="flex gap-2">
-                  {nota.status !== 'faturado' && (
-                    <button 
-                      onClick={() => confirmarPagamentoNota(nota.id)}
-                      className="flex items-center gap-1 bg-amber-50 hover:bg-emerald-600 text-amber-700 hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-lg border border-amber-200 hover:border-emerald-600 transition-all uppercase tracking-wide"
-                      title="Confirmar Recebimento"
-                    >
-                      <CheckCircle2 size={13} /> Confirmar Pago
-                    </button>
-                  )}
-                  
-                  <button 
-                    onClick={() => ejecutarImpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso, nota.status)}
-                    className="flex items-center gap-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-600 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all uppercase tracking-wide"
-                  >
-                    <Printer size={13} /> Imprimir Via
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+              );
+            })
+          )}
 
-          {/* BARRA DE PAGINAÇÃO */}
+          {/* BARRA DE PAGINAÇÃO DO HISTÓRICO */}
           {historico.length > 0 && (
             <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mt-4">
               <span className="text-xs font-bold text-slate-500">
-                Página <span className="text-slate-800 font-black">{paginaAtual}</span>
+                Página <span className="text-slate-800 font-black">{paginaAtual}</span> de {totalPaginas}
               </span>
               <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
                 <button
-                  onClick={paginaAnterior}
+                  onClick={() => carregarHistorico(paginaAtual - 1)}
                   disabled={paginaAtual === 1}
                   className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual === 1 ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
                 >
                   <ChevronLeft size={16} /> Anterior
                 </button>
                 <button
-                  onClick={proximaPagina}
-                  disabled={!temMais}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${!temMais ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
+                  onClick={() => carregarHistorico(paginaAtual + 1)}
+                  disabled={paginaAtual >= totalPaginas}
+                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual >= totalPaginas ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
                 >
                   Próxima <ChevronRight size={16} />
                 </button>
@@ -568,7 +608,7 @@ export default function NotasServico() {
             </div>
           )}
 
-          {historico.length === 0 && (
+          {!carregando && historico.length === 0 && (
             <div className="p-12 md:p-20 text-center bg-white rounded-3xl border border-slate-200">
               <History size={48} className="mx-auto text-slate-200 mb-2" />
               <p className="text-slate-400 font-medium text-sm">

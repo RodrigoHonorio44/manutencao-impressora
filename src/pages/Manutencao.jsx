@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, where, getDocs } from 'firebase/firestore'; 
+import { api } from '../services/api';
 import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCircle, X, Camera, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
@@ -44,25 +43,32 @@ export default function Manutencao() {
   // Estado de carregamento do OCR
   const [lendoFoto, setLendoFoto] = useState(false);
 
-  useEffect(() => {
-    const q = query(
-      collection(db, "atendimentos"), 
-      where("status", "not-in", ["Finalizado", "Faturado"])
-    );
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const dataOrdenada = data.sort((a, b) => {
-        const dataA = a.data_entrada?.seconds || 0;
-        const dataB = b.data_entrada?.seconds || 0;
+  const carregarChamados = async () => {
+    try {
+      const dados = await api.getAtendimentos();
+      
+      // Filtra os chamados ativos (excluindo Finalizado e Faturado)
+      const filtrados = dados.filter(item => {
+        const statusItem = (item.status || '').toLowerCase();
+        return statusItem !== 'finalizado' && statusItem !== 'faturado';
+      });
+
+      // Ordena por data decrescente
+      filtrados.sort((a, b) => {
+        const dataA = new Date(a.data_entrada || a.criadoEm || 0).getTime();
+        const dataB = new Date(b.data_entrada || b.criadoEm || 0).getTime();
         return dataB - dataA;
       });
-      setChamados(dataOrdenada);
-    }, (error) => {
+
+      setChamados(filtrados);
+    } catch (error) {
       console.error("Erro ao carregar bancada:", error);
-    });
-    
-    return () => unsubscribe();
+      toast.error("Erro ao conectar à API de atendimentos.");
+    }
+  };
+
+  useEffect(() => {
+    carregarChamados();
   }, []);
 
   // Efeito para buscar histórico quando o Serial for digitado
@@ -74,24 +80,18 @@ export default function Manutencao() {
       }
 
       try {
-        const q = query(
-          collection(db, "atendimentos"),
-          where("serial", "==", form.serial.trim().toLowerCase())
-        );
-        const querySnapshot = await getDocs(q);
-        
-        const rascunhoHistorico = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
+        const dados = await api.getAtendimentos();
+        const serialBusca = form.serial.trim().toLowerCase();
 
-        rascunhoHistorico.sort((a, b) => {
-          const dataA = a.data_entrada?.seconds || 0;
-          const dataB = b.data_entrada?.seconds || 0;
+        const filtrados = dados.filter(item => (item.serial || '').toLowerCase() === serialBusca);
+
+        filtrados.sort((a, b) => {
+          const dataA = new Date(a.data_entrada || a.criadoEm || 0).getTime();
+          const dataB = new Date(b.data_entrada || b.criadoEm || 0).getTime();
           return dataB - dataA;
         });
 
-        setHistoricoEquipamento(rascunhoHistorico);
+        setHistoricoEquipamento(filtrados);
       } catch (error) {
         console.error("Erro ao buscar histórico do serial:", error);
       }
@@ -140,7 +140,6 @@ export default function Manutencao() {
         if (textoLido.includes(marcaLimpa) || (marcaLimpa.includes('hp') && textoLido.includes('hp'))) {
           marcaDetectada = marca;
 
-          // Procura o modelo exato na lista da marca correspondente
           for (const mod of modelos) {
             const modLimpo = mod.toLowerCase().replace(/[^a-z0-9]/g, '');
             const textoLimpo = textoLido.replace(/[^a-z0-9]/g, '');
@@ -192,21 +191,37 @@ export default function Manutencao() {
       return toast.error("Marca, Modelo e Serial são obrigatórios!");
     }
     
-    const loading = toast.loading("Registrando entrada...");
+    const loading = toast.loading("Registrando entrada no MongoDB...");
     const numeroOS = gerarNumeroOS();
 
+    const novoAtendimento = {
+      cliente: form.cliente.toLowerCase(),
+      marca: marcaFinal.toLowerCase(),
+      modelo: modeloFinal.toLowerCase(),
+      serial: form.serial.trim().toLowerCase(),
+      defeito: form.defeito.toLowerCase(),
+      os: numeroOS,
+      status: 'Em Análise',
+      pecas_utilizadas: [],
+      data_entrada: new Date().toISOString()
+    };
+
     try {
-      await addDoc(collection(db, "atendimentos"), {
-        cliente: form.cliente.toLowerCase(),
-        marca: marcaFinal.toLowerCase(),
-        modelo: modeloFinal.toLowerCase(),
-        serial: form.serial.trim().toLowerCase(),
-        defeito: form.defeito.toLowerCase(),
-        os: numeroOS,
-        status: 'Em Análise',
-        pecas_utilizadas: [], 
-        data_entrada: serverTimestamp()
+      // Envia diretamente para a rota de atendimentos da API
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://192.168.0.194:3000/api'}/atendimentos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(novoAtendimento)
       });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || 'Erro ao registrar atendimento no servidor.');
+      }
 
       setForm({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
       setMarcaManual('');
@@ -214,10 +229,25 @@ export default function Manutencao() {
       setIsMarcaManual(false);
       setIsModeloManual(false);
       setHistoricoEquipamento([]);
+      
       toast.success(`OS ${numeroOS} registrada!`, { id: loading });
-    } catch (error) { 
-      toast.error("Erro no sistema.", { id: loading }); 
+      carregarChamados();
+    } catch (error) {
+      console.error("Erro ao registrar entrada:", error);
+      toast.error(`Erro ao salvar: ${error.message}`, { id: loading }); 
     }
+  };
+
+  const formatarDataExibicao = (dataStr) => {
+    if (!dataStr) return '---';
+    const data = new Date(dataStr);
+    return isNaN(data.getTime()) ? '---' : data.toLocaleDateString('pt-BR');
+  };
+
+  const formatarHoraExibicao = (dataStr) => {
+    if (!dataStr) return '';
+    const data = new Date(dataStr);
+    return isNaN(data.getTime()) ? '' : data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -234,7 +264,6 @@ export default function Manutencao() {
             <h2 className="font-bold text-slate-800 text-base md:text-lg">Nova Entrada</h2>
           </div>
 
-          {/* Botão para escanear a etiqueta pela câmera */}
           <label className={`flex items-center gap-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 px-3 py-2 rounded-xl cursor-pointer transition-all border border-blue-200 text-xs font-bold ${lendoFoto ? 'opacity-50 pointer-events-none' : ''}`}>
             {lendoFoto ? (
               <Loader2 size={16} className="animate-spin text-blue-600" />
@@ -265,7 +294,6 @@ export default function Manutencao() {
             ))}
           </select>
           
-          {/* Campo de Seleção ou Digitação da Marca */}
           <div className="flex flex-col gap-2 w-full">
             <select
               value={isMarcaManual ? "MANUAL" : form.marca}
@@ -300,7 +328,6 @@ export default function Manutencao() {
             )}
           </div>
 
-          {/* Campo de Seleção ou Digitação do Modelo */}
           <div className="flex flex-col gap-2 w-full">
             {!isMarcaManual ? (
               <select
@@ -384,60 +411,63 @@ export default function Manutencao() {
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          {chamados.map((item) => (
-            <div key={item.id} className="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center hover:shadow-md transition-all gap-4">
-              <div className="space-y-3 flex-1 w-full">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="flex items-center gap-1 text-[10px] font-black bg-blue-600 text-white px-2 py-1 rounded-lg">
-                    <Hash size={12} /> OS: {item.os || 'GERANDO...'}
-                  </span>
-                  
-                  <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-1 rounded-lg border border-slate-200">
-                    {item.data_entrada?.toDate().toLocaleDateString('pt-BR')}
-                  </span>
-                  
-                  <span className="text-xs font-bold text-blue-600 uppercase italic">
-                    {item.marca} - {item.modelo}
-                  </span>
-                </div>
-
-                <div className="space-y-0.5">
-                  <p className="text-sm text-slate-800 font-bold capitalize">Cliente: {item.cliente}</p>
-                  <p className="text-[11px] font-mono text-slate-500 font-bold uppercase">S/N: {item.serial}</p>
-                </div>
-                
-                <p className="text-xs text-slate-500 font-medium bg-slate-50 p-2 rounded-lg border border-slate-100">
-                  <span className="font-bold text-slate-700 uppercase text-[9px] block mb-1">Defeito Relatado:</span>
-                  {item.defeito}
-                </p>
-
-                {item.pecas_utilizadas?.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {item.pecas_utilizadas.map((p, idx) => (
-                      <span key={idx} className="flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200 uppercase">
-                        <CheckCircle2 size={10} /> {p}
-                      </span>
-                    ))}
+          {chamados.map((item) => {
+            const itemId = item._id || item.id;
+            return (
+              <div key={itemId} className="bg-white p-4 md:p-5 rounded-2xl border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center hover:shadow-md transition-all gap-4">
+                <div className="space-y-3 flex-1 w-full">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="flex items-center gap-1 text-[10px] font-black bg-blue-600 text-white px-2 py-1 rounded-lg">
+                      <Hash size={12} /> OS: {item.os || 'GERANDO...'}
+                    </span>
+                    
+                    <span className="text-[10px] font-black bg-slate-100 text-slate-500 px-2 py-1 rounded-lg border border-slate-200">
+                      {formatarDataExibicao(item.data_entrada || item.criadoEm)}
+                    </span>
+                    
+                    <span className="text-xs font-bold text-blue-600 uppercase italic">
+                      - {item.marca} {item.modelo}
+                    </span>
                   </div>
-                )}
-              </div>
 
-              <div className="flex flex-col items-stretch md:items-end gap-3 min-w-[180px] w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
-                <span className={`px-4 py-1 text-[10px] font-black rounded-full uppercase border text-center ${
-                  item.status === 'Aguardando Peça' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                }`}>
-                  {item.status}
-                </span>
-                
-                <button 
-                  onClick={() => { setChamadoSelecionado(item); setModalAberto(true); }}
-                  className="flex items-center gap-2 bg-slate-900 text-white text-xs px-5 py-3 rounded-xl font-bold hover:bg-blue-600 transition-all shadow-xl shadow-slate-200 w-full justify-center uppercase tracking-wider"
-                >
-                  <Settings size={14} /> Gerenciar OS
-                </button>
+                  <div className="space-y-0.5">
+                    <p className="text-sm text-slate-800 font-bold capitalize">Cliente: {item.cliente}</p>
+                    <p className="text-[11px] font-mono text-slate-500 font-bold uppercase">S/N: {item.serial}</p>
+                  </div>
+                  
+                  <p className="text-xs text-slate-500 font-medium bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <span className="font-bold text-slate-700 uppercase text-[9px] block mb-1">Defeito Relatado:</span>
+                    {item.defeito}
+                  </p>
+
+                  {item.pecas_utilizadas?.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {item.pecas_utilizadas.map((p, idx) => (
+                        <span key={idx} className="flex items-center gap-1 text-[9px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md border border-emerald-200 uppercase">
+                          <CheckCircle2 size={10} /> {p}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col items-stretch md:items-end gap-3 min-w-[180px] w-full md:w-auto mt-2 md:mt-0 pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
+                  <span className={`px-4 py-1 text-[10px] font-black rounded-full uppercase border text-center ${
+                    item.status === 'Aguardando Peça' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                  }`}>
+                    {item.status}
+                  </span>
+                  
+                  <button 
+                    onClick={() => { setChamadoSelecionado(item); setModalAberto(true); }}
+                    className="flex items-center gap-2 bg-slate-900 text-white text-xs px-5 py-3 rounded-xl font-bold hover:bg-blue-600 transition-all shadow-xl shadow-slate-200 w-full justify-center uppercase tracking-wider"
+                  >
+                    <Settings size={14} /> Gerenciar OS
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           
           {chamados.length === 0 && (
             <div className="text-center py-16 md:py-20 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
@@ -468,44 +498,47 @@ export default function Manutencao() {
             </div>
 
             <div className="p-4 md:p-6 overflow-y-auto space-y-4 flex-1">
-              {historicoEquipamento.map((hist, index) => (
-                <div key={hist.id} className="border border-slate-200 p-4 rounded-xl space-y-2.5 bg-white relative">
-                  <div className="absolute right-4 top-4 text-[10px] font-black bg-slate-100 text-slate-600 border px-2 py-0.5 rounded-md">
-                    #{index + 1}
-                  </div>
-                  <div className="flex flex-wrap gap-2 items-center text-xs">
-                    <span className="bg-blue-50 text-blue-700 font-black px-2 py-0.5 rounded text-[10px]">
-                      OS: {hist.os}
-                    </span>
-                    <span className="font-bold text-slate-500 text-[11px]">
-                      Entrada: {hist.data_entrada?.toDate().toLocaleDateString('pt-BR')} às {hist.data_entrada?.toDate().toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}
-                    </span>
-                    <span className={`px-2 py-0.5 text-[9px] font-black rounded uppercase border ${
-                      hist.status === 'Finalizado' || hist.status === 'Faturado' 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                        : 'bg-slate-100 text-slate-700 border-slate-200'
-                    }`}>
-                      {hist.status}
-                    </span>
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-700 uppercase">Cliente na época: <span className="text-slate-900 font-medium capitalize">{hist.cliente}</span></h4>
-                    <p className="text-xs font-bold text-slate-700 mt-1 uppercase">Defeito: <span className="text-slate-500 font-medium normal-case block bg-slate-50 p-2 rounded border mt-0.5">{hist.defeito}</span></p>
-                  </div>
-                  {hist.pecas_utilizadas?.length > 0 && (
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Peças Aplicadas:</span>
-                      <div className="flex flex-wrap gap-1">
-                        {hist.pecas_utilizadas.map((p, i) => (
-                          <span key={i} className="text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded">
-                            {p}
-                          </span>
-                        ))}
-                      </div>
+              {historicoEquipamento.map((hist, index) => {
+                const histId = hist._id || hist.id;
+                return (
+                  <div key={histId} className="border border-slate-200 p-4 rounded-xl space-y-2.5 bg-white relative">
+                    <div className="absolute right-4 top-4 text-[10px] font-black bg-slate-100 text-slate-600 border px-2 py-0.5 rounded-md">
+                      #{index + 1}
                     </div>
-                  )}
-                </div>
-              ))}
+                    <div className="flex flex-wrap gap-2 items-center text-xs">
+                      <span className="bg-blue-50 text-blue-700 font-black px-2 py-0.5 rounded text-[10px]">
+                        OS: {hist.os}
+                      </span>
+                      <span className="font-bold text-slate-500 text-[11px]">
+                        Entrada: {formatarDataExibicao(hist.data_entrada || hist.criadoEm)} às {formatarHoraExibicao(hist.data_entrada || hist.criadoEm)}
+                      </span>
+                      <span className={`px-2 py-0.5 text-[9px] font-black rounded uppercase border ${
+                        hist.status === 'Finalizado' || hist.status === 'Faturado' 
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                          : 'bg-slate-100 text-slate-700 border-slate-200'
+                      }`}>
+                        {hist.status}
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-700 uppercase">Cliente na época: <span className="text-slate-900 font-medium capitalize">{hist.cliente}</span></h4>
+                      <p className="text-xs font-bold text-slate-700 mt-1 uppercase">Defeito: <span className="text-slate-500 font-medium normal-case block bg-slate-50 p-2 rounded border mt-0.5">{hist.defeito}</span></p>
+                    </div>
+                    {hist.pecas_utilizadas?.length > 0 && (
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Peças Aplicadas:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {hist.pecas_utilizadas.map((p, i) => (
+                            <span key={i} className="text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded">
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

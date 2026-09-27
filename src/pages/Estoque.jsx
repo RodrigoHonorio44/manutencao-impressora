@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, addDoc, serverTimestamp, query, onSnapshot, doc, deleteDoc, updateDoc } from 'firebase/firestore';
 import { PackagePlus, Table, Search, Trash2, Archive, CheckCircle2, Eye, X, Loader2, Edit3, Check, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { api } from '../services/api';
 
-// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO (Catálogo Atualizado com Fotos)
+// BANCO DE DADOS DE CONFIGURAÇÃO INTERNO
 const CATALOGO_IMPRESSORAS = {
   Brother: {
     modelos: ["DCP-L2540DN", "DCP-L5652DN", "MFC-L5702DN", "DCP-L5502DN", "HL-L5102DW"],
@@ -34,12 +33,12 @@ const CATALOGO_IMPRESSORAS = {
       { 
         nome: "Caixa de Resíduo de Tinta C9344 / EWMB3", 
         pn: "C9344 / EWMB3", 
-        obs: "Compatível com Expression Home XP-3100 / XP-4100 / XP-4101 / XP-4105, WorkForce WF-2810DWF / WF-2830DWF / WF-2850DWF / WF-2830 / WF-2850 / WF-2851 / EW-452A e EcoTank L3250 / L3210 / L3150 / L3110 / L5290" 
+        obs: "Compatível com XP-3100 / XP-4100 / WF-2830 / L3250 / L3150" 
       },
       { 
         nome: "Caixa de Resíduo de Tinta E-04D1 / EWMB2", 
         pn: "E-04D1 / EWMB2", 
-        obs: "Compatível com WorkForce WF-2860 / WF-2860DWF / WF-2865DWF / WF-2861, Expression Home XP-5105 / XP-5100, EcoTank ET-M3180 / ET-M3170 / ET-M3140 / ET-M2170 / ET-M2140 / ET-M1180 / ET-M1170 / ET-M1140 / ET-4750 / ET-3750 / ET-3700 / ET-2760 / ET-3710 / ET-4760 / ET-3760 / ST-M1000 / ST-M3000 / ST-4000 / ST-3000 / L6190 / M1180 / M2170 / M3180 / L6168 / L6178 / L6198 / L6171" 
+        obs: "Compatível com WF-2860, M2170, M2140, L6190, L6171" 
       }
     ]
   },
@@ -77,75 +76,54 @@ export default function Estoque() {
   const [pecaObjetoSelecionado, setPecaObjetoSelecionado] = useState(null);
   const [quantidade, setQuantidade] = useState('');
   const [termoBusca, setTermoBusca] = useState('');
-  
+
   const [itemSelecionadoRastrear, setItemSelecionadoRastrear] = useState(null);
   const [historicoAtendimentos, setHistoricoAtendimentos] = useState([]);
   const [carregandoAtendimentos, setCarregandoAtendimentos] = useState(false);
 
-  // Estados para Controle de Edição de Itens
+  // Edição
   const [itemEmEdicao, setItemEmEdicao] = useState(null);
   const [editForm, setEditForm] = useState({ marca: '', modelo: '', nome: '', qtd: '' });
 
-  useEffect(() => {
-    if (verFiltroStatus === 'disponivel') {
-      const q = query(collection(db, "estoque_pecas"));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        const ativos = data.filter(item => (Number(item.qtd) || 0) > 0);
+  const carregarEstoque = async () => {
+    try {
+      const response = api.getEstoque ? await api.getEstoque() : await api.get('/api/estoque_pecas');
+      const rawData = response?.data !== undefined ? response.data : response;
 
-        ativos.sort((a, b) => {
-          const obterTempo = (item) => {
-            const campoData = item.data_entrada;
-            if (!campoData) return 0;
-            if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
-            return campoData.seconds ? campoData.seconds * 1000 : new Date(campoData).getTime() || 0;
-          };
-          return obterTempo(b) - obterTempo(a);
-        });
-        setPecas(ativos);
-      });
-      return () => unsubscribe();
-    } 
-    else {
-      let dadosEstoqueZerado = [];
-      let dadosHistoricoZerado = [];
+      let listaItens = [];
+      if (Array.isArray(rawData)) {
+        listaItens = rawData;
+      } else if (rawData && typeof rawData === 'object') {
+        listaItens = rawData.docs || rawData.items || rawData.estoque || rawData.pecas || rawData.data || [];
+      }
 
-      const unificarEZerar = () => {
-        const unificados = [...dadosEstoqueZerado, ...dadosHistoricoZerado];
-        const IDsUnicos = Array.from(new Set(unificados.map(a => a.id)))
-          .map(id => unificados.find(a => a.id === id));
+      let filtrados = [];
+      if (verFiltroStatus === 'disponivel') {
+        filtrados = listaItens.filter(item => Number(item.qtd) > 0);
+      } else {
+        filtrados = listaItens.filter(item => Number(item.qtd) === 0);
+      }
 
-        IDsUnicos.sort((a, b) => {
-          const obterTempo = (item) => {
-            const campoData = item.data_fim || item.data_entrada;
-            if (!campoData) return 0;
-            if (typeof campoData.toDate === 'function') return campoData.toDate().getTime();
-            return campoData.seconds ? campoData.seconds * 1000 : new Date(campoData).getTime() || 0;
-          };
-          return obterTempo(b) - obterTempo(a);
-        });
-
-        setPecas(IDsUnicos);
+      const obterTimestamp = (item) => {
+        let campo = item.data_entrada || item.createdAt;
+        if (!campo) return 0;
+        if (typeof campo === 'object' && campo.$date) {
+          campo = campo.$date;
+        }
+        const parsed = new Date(campo).getTime();
+        return isNaN(parsed) ? 0 : parsed;
       };
 
-      const qEstoque = query(collection(db, "estoque_pecas"));
-      const unsubscribeEstoque = onSnapshot(qEstoque, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        dadosEstoqueZerado = data.filter(item => (Number(item.qtd) || 0) === 0);
-        unificarEZerar();
-      });
-
-      const qHistorico = query(collection(db, "historico_lotes_zerados"));
-      const unsubscribeHistorico = onSnapshot(qHistorico, (snapshot) => {
-        dadosHistoricoZerado = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        unificarEZerar();
-      });
-
-      return () => {
-        unsubscribeEstoque();
-        unsubscribeHistorico();
-      };
+      filtrados.sort((a, b) => obterTimestamp(b) - obterTimestamp(a));
+      setPecas(filtrados);
+    } catch (error) {
+      console.error("Erro ao carregar estoque:", error);
+      toast.error("Erro ao conectar à API de estoque.");
     }
+  };
+
+  useEffect(() => {
+    carregarEstoque();
   }, [verFiltroStatus]);
 
   useEffect(() => {
@@ -154,75 +132,53 @@ export default function Estoque() {
       return;
     }
 
-    setCarregandoAtendimentos(true);
-    const qAtendimentos = query(collection(db, "atendimentos"));
+    const buscarAtendimentos = async () => {
+      setCarregandoAtendimentos(true);
+      try {
+        const response = api.getAtendimentos ? await api.getAtendimentos() : await api.get('/api/atendimentos');
+        const todosAtendimentos = response.data || response;
 
-    const unsubscribe = onSnapshot(qAtendimentos, (snapshot) => {
-      const todosAtendimentos = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+        const textoPecaCompleto = (itemSelecionadoRastrear.nome || '').toLowerCase();
+        let partNumberIsolado = "";
+        const matchPN = textoPecaCompleto.match(/part number:\s*([a-zA-Z0-9_-]+)/);
+        if (matchPN && matchPN[1]) {
+          partNumberIsolado = matchPN[1].toLowerCase().trim();
+        }
 
-      const textoPecaCompleto = (itemSelecionadoRastrear.nome || '').toLowerCase();
-      let partNumberIsolado = "";
-      const matchPN = textoPecaCompleto.match(/part number:\s*([a-zA-Z0-9_-]+)/);
-      if (matchPN && matchPN[1]) {
-        partNumberIsolado = matchPN[1].toLowerCase().trim();
+        const listaAtendimentos = Array.isArray(todosAtendimentos) ? todosAtendimentos : (todosAtendimentos.docs || todosAtendimentos.items || []);
+
+        const filtrados = listaAtendimentos.filter(atendimento => {
+          const pecasUtilizadas = atendimento.pecas_utilizadas;
+          if (Array.isArray(pecasUtilizadas)) {
+            return pecasUtilizadas.some(pecaString => {
+              const nomePecaAtendimento = pecaString.toLowerCase();
+              return nomePecaAtendimento.includes(textoPecaCompleto) || (partNumberIsolado && nomePecaAtendimento.includes(partNumberIsolado));
+            });
+          }
+          if (typeof pecasUtilizadas === 'string') {
+            return pecasUtilizadas.toLowerCase().includes(textoPecaCompleto);
+          }
+          return false;
+        });
+
+        setHistoricoAtendimentos(filtrados);
+      } catch (error) {
+        console.error("Erro ao buscar atendimentos:", error);
+      } finally {
+        setCarregandoAtendimentos(false);
       }
+    };
 
-      const filtrados = todosAtendimentos.filter(atendimento => {
-        const pecasUtilizadas = atendimento.pecas_utilizadas;
-
-        if (Array.isArray(pecasUtilizadas)) {
-          return pecasUtilizadas.some(pecaString => {
-            const nomePecaAtendimento = pecaString.toLowerCase();
-            const batePorTexto = (
-              nomePecaAtendimento.includes(textoPecaCompleto) ||
-              textoPecaCompleto.includes(nomePecaAtendimento)
-            );
-            const batePorPartNumber = partNumberIsolado && nomePecaAtendimento.includes(partNumberIsolado);
-            return batePorTexto || batePorPartNumber;
-          });
-        }
-
-        if (typeof pecasUtilizadas === 'string') {
-          const stringPeca = pecasUtilizadas.toLowerCase();
-          return stringPeca.includes(textoPecaCompleto) || textoPecaCompleto.includes(stringPeca);
-        }
-
-        return false;
-      });
-
-      filtrados.sort((a, b) => {
-        const obterTempo = (x) => {
-          const d = x.data_finalizacao || x.data_atendimento || x.data_entrada;
-          if (!d) return 0;
-          if (typeof d.toDate === 'function') return d.toDate().getTime();
-          return d.seconds ? d.seconds * 1000 : new Date(d).getTime();
-        };
-        return obterTempo(b) - obterTempo(a);
-      });
-
-      setHistoricoAtendimentos(filtrados);
-      setCarregandoAtendimentos(false);
-    }, (error) => {
-      console.error("Erro ao ler atendimentos:", error);
-      setCarregandoAtendimentos(false);
-    });
-
-    return () => unsubscribe();
+    buscarAtendimentos();
   }, [itemSelecionadoRastrear]);
 
   const formatarData = (campoData) => {
     if (!campoData) return '---';
-    if (typeof campoData.toDate === 'function') return campoData.toDate().toLocaleDateString('pt-BR');
-    if (campoData.seconds) return new Date(campoData.seconds * 1000).toLocaleDateString('pt-BR');
-    if (typeof campoData === 'string') {
-      const dataTentativa = new Date(campoData);
-      if (!isNaN(dataTentativa.getTime())) return dataTentativa.toLocaleDateString('pt-BR');
-      return campoData;
+    if (typeof campoData === 'object' && campoData.$date) {
+      campoData = campoData.$date;
     }
-    return '---';
+    const data = new Date(campoData);
+    return isNaN(data.getTime()) ? '---' : data.toLocaleDateString('pt-BR');
   };
 
   const handleMarcaChange = (e) => {
@@ -237,29 +193,42 @@ export default function Estoque() {
       return toast.error("Preencha todos os campos antes de salvar!");
     }
 
-    const loading = toast.loading("Registrando no estoque...");
-    const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} - (part number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
+    const qtdNum = Number(quantidade);
+    if (isNaN(qtdNum) || qtdNum <= 0) {
+      return toast.error("Informe uma quantidade válida maior que zero!");
+    }
+
+    const loading = toast.loading("Registrando no MongoDB...");
+    const nomeCompletoPeca = `${pecaObjetoSelecionado.nome} (part number: ${pecaObjetoSelecionado.pn}) [${pecaObjetoSelecionado.obs}]`;
+
+    const novoItem = {
+      marca: marcaSelecionada.trim().toLowerCase(),
+      modelo: modeloSelecionada.trim().toLowerCase(),
+      nome: nomeCompletoPeca.trim().toLowerCase(),
+      qtd: qtdNum,
+      data_entrada: new Date().toISOString()
+    };
 
     try {
-      await addDoc(collection(db, "estoque_pecas"), {
-        marca: marcaSelecionada.trim().toLowerCase(),
-        modelo: modeloSelecionada.trim().toLowerCase(),
-        nome: nomeCompletoPeca.trim().toLowerCase(),
-        qtd: Number(quantidade),
-        data_entrada: serverTimestamp()
-      });
+      if (api.criarEstoque) {
+        await api.criarEstoque(novoItem);
+      } else {
+        await api.post('/api/estoque_pecas', novoItem);
+      }
 
+      setMarcaSelecionada('');
+      setModeloSelecionada('');
       setPecaObjetoSelecionado(null);
       setQuantidade('');
       toast.success("Peça registrada com sucesso!", { id: loading });
+      carregarEstoque();
     } catch (error) {
-      toast.error("Erro ao salvar no banco.", { id: loading });
+      toast.error("Erro ao salvar peça.", { id: loading });
     }
   };
 
-  // Funções de Edição de Estoque
   const handleIniciarEdicao = (item) => {
-    setItemEmEdicao(item.id);
+    setItemEmEdicao(item._id || item.id);
     setEditForm({
       marca: item.marca || '',
       modelo: item.modelo || '',
@@ -278,36 +247,44 @@ export default function Estoque() {
       return toast.error("Preencha todos os campos da edição!");
     }
 
-    const loading = toast.loading("Atualizando estoque...");
-    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
+    const loading = toast.loading("Atualizando no MongoDB...");
 
     try {
-      const docRef = doc(db, nomeColecao, id);
-      await updateDoc(docRef, {
+      const dadosAtualizados = {
         marca: editForm.marca.trim().toLowerCase(),
         modelo: editForm.modelo.trim().toLowerCase(),
         nome: editForm.nome.trim().toLowerCase(),
         qtd: Number(editForm.qtd)
-      });
+      };
+
+      if (api.atualizarEstoque) {
+        await api.atualizarEstoque(id, dadosAtualizados);
+      } else {
+        await api.put(`/api/estoque_pecas/${id}`, dadosAtualizados);
+      }
 
       setItemEmEdicao(null);
       toast.success("Estoque atualizado com sucesso!", { id: loading });
+      carregarEstoque();
     } catch (error) {
       toast.error("Erro ao atualizar o item.", { id: loading });
     }
   };
 
   const handleExcluir = async (id, nomeCompleto) => {
-    const confirmar = window.confirm(`Deseja realmente remover esta entrada do estoque?\n\n"${nomeCompleto}"`);
-    if (!confirmar) return;
-
-    const loading = toast.loading("Removendo item do estoque...");
-    const nomeColecao = verFiltroStatus === 'disponivel' ? "estoque_pecas" : "historico_lotes_zerados";
+    const loading = toast.loading(`A remover "${nomeCompleto}"...`);
 
     try {
-      await deleteDoc(doc(db, nomeColecao, id));
+      if (api.excluirEstoque) {
+        await api.excluirEstoque(id);
+      } else {
+        await api.delete(`/api/estoque_pecas/${id}`);
+      }
+
       toast.success("Item removido com sucesso!", { id: loading });
+      carregarEstoque();
     } catch (error) {
+      console.error("Erro ao excluir peça:", error);
       toast.error("Erro ao tentar excluir o item.", { id: loading });
     }
   };
@@ -328,7 +305,7 @@ export default function Estoque() {
         <p className="text-xs md:text-sm text-slate-500 font-medium">Controle inteligente e padronizado de insumos de assistência.</p>
       </header>
 
-      {/* Formulário Automatizado - Mobile Friendly */}
+      {/* Formulário Automatizado */}
       <section className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
         <div className="flex items-center gap-2 mb-1 text-blue-600">
           <PackagePlus size={22} />
@@ -408,7 +385,7 @@ export default function Estoque() {
           <table className="w-full text-left border-collapse min-w-[700px]">
             <thead className="bg-slate-100/70 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b">
               <tr>
-                <th className="p-4 pl-6 w-32">{verFiltroStatus === 'disponivel' ? 'Data' : 'Data Fim'}</th>
+                <th className="p-4 pl-6 w-32">Data Entrada</th>
                 <th className="p-4 w-48">Marca / Modelo</th>
                 <th className="p-4">Especificação Técnica & Observação</th>
                 <th className="p-4 text-center w-24">Qtd</th>
@@ -417,15 +394,15 @@ export default function Estoque() {
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 font-medium text-sm">
               {pecasFiltradas.map((item) => {
-                const eItemEditando = itemEmEdicao === item.id;
+                const itemId = item._id || item.id;
+                const eItemEditando = itemEmEdicao === itemId;
 
                 return (
-                  <tr key={item.id} className={eItemEditando ? "bg-blue-50/40 transition-colors" : "hover:bg-slate-50/60 transition-colors"}>
+                  <tr key={itemId} className={eItemEditando ? "bg-blue-50/40 transition-colors" : "hover:bg-slate-50/60 transition-colors"}>
                     <td className="p-4 pl-6 text-xs text-slate-400">
-                      {formatarData(item.data_fim || item.data_entrada)}
+                      {formatarData(item.data_entrada || item.createdAt)}
                     </td>
                     
-                    {/* Marca e Modelo Editáveis */}
                     <td className="p-4">
                       {eItemEditando ? (
                         <div className="space-y-1">
@@ -434,14 +411,12 @@ export default function Estoque() {
                             value={editForm.marca}
                             onChange={(e) => setEditForm({ ...editForm, marca: e.target.value })}
                             className="w-full p-1 text-xs font-bold uppercase border rounded bg-white"
-                            placeholder="Marca"
                           />
                           <input
                             type="text"
                             value={editForm.modelo}
                             onChange={(e) => setEditForm({ ...editForm, modelo: e.target.value })}
                             className="w-full p-1 text-[10px] font-bold uppercase border rounded bg-white"
-                            placeholder="Modelo"
                           />
                         </div>
                       ) : (
@@ -452,7 +427,6 @@ export default function Estoque() {
                       )}
                     </td>
 
-                    {/* Especificação do Insumo Editável */}
                     <td className="p-4 text-xs text-slate-600 uppercase font-semibold">
                       {eItemEditando ? (
                         <textarea
@@ -466,7 +440,6 @@ export default function Estoque() {
                       )}
                     </td>
 
-                    {/* Quantidade Editável */}
                     <td className="p-4 text-center">
                       {eItemEditando ? (
                         <input
@@ -483,14 +456,13 @@ export default function Estoque() {
                       )}
                     </td>
 
-                    {/* Ações Dinâmicas */}
                     <td className="p-4 text-center">
                       {eItemEditando ? (
                         <div className="flex items-center justify-center gap-1">
                           <button
                             type="button"
-                            onClick={() => handleSalvarEdicao(item.id)}
-                            className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl transition-colors"
+                            onClick={() => handleSalvarEdicao(itemId)}
+                            className="text-emerald-600 bg-emerald-50 hover:bg-emerald-100 p-2 rounded-xl"
                             title="Salvar alterações"
                           >
                             <Check size={16} />
@@ -498,7 +470,7 @@ export default function Estoque() {
                           <button
                             type="button"
                             onClick={handleCancelarEdicao}
-                            className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-xl transition-colors"
+                            className="text-slate-400 hover:bg-slate-200 p-2 rounded-xl"
                             title="Cancelar edição"
                           >
                             <RotateCcw size={16} />
@@ -509,24 +481,24 @@ export default function Estoque() {
                           <button
                             type="button"
                             onClick={() => handleIniciarEdicao(item)}
-                            className="text-slate-400 active:text-amber-600 md:hover:text-amber-600 p-2 rounded-xl active:bg-amber-50 md:hover:bg-amber-50 transition-colors"
-                            title="Editar item do estoque"
+                            className="text-slate-400 hover:text-amber-600 hover:bg-amber-50 p-2 rounded-xl"
+                            title="Editar item"
                           >
                             <Edit3 size={16} />
                           </button>
                           <button
                             type="button"
                             onClick={() => setItemSelecionadoRastrear(item)}
-                            className="text-slate-400 active:text-blue-600 md:hover:text-blue-600 p-2 rounded-xl active:bg-blue-50 md:hover:bg-blue-50 transition-colors"
-                            title="Ver atendimentos que usaram esta peça"
+                            className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 p-2 rounded-xl"
+                            title="Rastrear uso"
                           >
                             <Eye size={16} />
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleExcluir(item.id, item.nome)}
-                            className="text-slate-400 active:text-red-600 md:hover:text-red-600 p-2 rounded-xl active:bg-red-50 md:hover:bg-red-50 transition-colors"
-                            title="Excluir item do estoque"
+                            onClick={() => handleExcluir(itemId, item.nome)}
+                            className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-xl"
+                            title="Excluir item"
                           >
                             <Trash2 size={16} />
                           </button>
@@ -554,7 +526,7 @@ export default function Estoque() {
           <div className="bg-white rounded-2xl shadow-xl border w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
             <div className="p-4 md:p-5 bg-slate-50 border-b flex justify-between items-center shrink-0">
               <div className="max-w-[85%]">
-                <span className="text-[9px] md:text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso Real em Atendimentos</span>
+                <span className="text-[9px] md:text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-blue-100 text-blue-800 tracking-wider">Histórico de Uso em Atendimentos</span>
                 <h3 className="text-xs md:text-sm font-bold text-slate-800 mt-1 uppercase truncate">{itemSelecionadoRastrear.nome}</h3>
               </div>
               <button onClick={() => setItemSelecionadoRastrear(null)} className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-400 hover:text-slate-600">
@@ -563,12 +535,10 @@ export default function Estoque() {
             </div>
 
             <div className="p-4 md:p-6 space-y-4 overflow-y-auto flex-1">
-              <p className="text-[11px] md:text-xs text-slate-500 font-medium">Buscando correspondências internas na lista de peças aplicadas dos chamados:</p>
-              
               {carregandoAtendimentos ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400 space-y-2">
                   <Loader2 size={22} className="animate-spin text-blue-600" />
-                  <span className="text-xs font-semibold">Vasculhando banco de atendimentos...</span>
+                  <span className="text-xs font-semibold">Buscando atendimentos no MongoDB...</span>
                 </div>
               ) : (
                 <div className="border rounded-xl overflow-x-auto bg-slate-50">
@@ -584,9 +554,9 @@ export default function Estoque() {
                     <tbody className="divide-y text-slate-700 font-medium">
                       {historicoAtendimentos.length > 0 ? (
                         historicoAtendimentos.map((atendimento) => (
-                          <tr key={atendimento.id} className="hover:bg-white transition-colors">
+                          <tr key={atendimento._id || atendimento.id} className="hover:bg-white transition-colors">
                             <td className="p-3 font-semibold text-slate-500">
-                              {formatarData(atendimento.data_finalizacao || atendimento.data_atendimento || atendimento.data_entrada)}
+                              {formatarData(atendimento.data_finalizacao || atendimento.createdAt)}
                             </td>
                             <td className="p-3 text-slate-900 uppercase font-bold">
                               {atendimento.modelo || atendimento.modelo_impressora || '---'}
@@ -594,20 +564,15 @@ export default function Estoque() {
                             <td className="p-3 tracking-wider font-mono text-blue-600 font-bold uppercase">
                               {atendimento.serial || atendimento.num_serie || '---'}
                             </td>
-                            <td className="p-3 text-center text-slate-500">
-                              <span className="font-bold block text-slate-700">
-                                {atendimento.os ? `#${atendimento.os}` : `#${atendimento.id.substring(0, 5)}`}
-                              </span>
-                              <span className="text-[10px] text-slate-400 block uppercase max-w-[150px] truncate mx-auto">
-                                {atendimento.cliente || 'Sem Local'}
-                              </span>
+                            <td className="p-3 text-center font-bold text-slate-600 uppercase">
+                              {atendimento.os || atendimento.numero_os || atendimento.setor || '---'}
                             </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan="4" className="text-center py-10 text-slate-400 italic font-normal">
-                            Nenhum registro encontrado para essa especificação.
+                          <td colSpan="4" className="text-center p-6 text-slate-400 italic">
+                            Nenhum atendimento registrado utilizou esta peça até o momento.
                           </td>
                         </tr>
                       )}
@@ -615,12 +580,6 @@ export default function Estoque() {
                   </table>
                 </div>
               )}
-            </div>
-
-            <div className="p-4 bg-slate-50 border-t flex justify-end shrink-0">
-              <button onClick={() => setItemSelecionadoRastrear(null)} className="w-full sm:w-auto px-5 py-2.5 bg-slate-200 text-slate-700 rounded-xl text-xs font-bold uppercase tracking-wider active:bg-slate-300 transition-all">
-                Fechar Janela
-              </button>
             </div>
           </div>
         </div>

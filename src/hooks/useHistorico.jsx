@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, getDocs, query, orderBy, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../services/api';
 import toast from 'react-hot-toast';
 
 export function useHistorico(itensPorPagina = 5) {
@@ -62,7 +61,6 @@ export function useHistorico(itensPorPagina = 5) {
     );
   };
 
-  // Aplica a regra de exibição inicial (mês vigente) ou respeita seleção de data/busca
   const aplicarFiltroPadraoOuMes = (lista) => {
     return lista.filter(os => ehMesAtual(os.data_entrada));
   };
@@ -70,14 +68,16 @@ export function useHistorico(itensPorPagina = 5) {
   const carregarTodosAtendimentos = async () => {
     setCarregando(true);
     try {
-      const atendimentosRef = collection(db, "atendimentos");
-      const q = query(atendimentosRef, orderBy("data_entrada", "desc"));
-      const snapshot = await getDocs(q);
-      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const lista = await api.getAtendimentos();
       
-      setTodosAtendimentos(lista);
-      // Ao carregar inicialmente, exibe apenas os atendimentos do mês vigente
-      setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(lista));
+      const listaOrdenada = lista.sort((a, b) => {
+        const dtA = extrairData(a.data_entrada) || 0;
+        const dtB = extrairData(b.data_entrada) || 0;
+        return dtB - dtA;
+      });
+
+      setTodosAtendimentos(listaOrdenada);
+      setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(listaOrdenada));
     } catch (error) {
       console.error("Erro ao carregar histórico:", error);
       toast.error("Erro ao carregar o histórico de manutenções.");
@@ -86,7 +86,6 @@ export function useHistorico(itensPorPagina = 5) {
     }
   };
 
-  // Funções de Seleção Múltipla
   const toggleSelecionar = (id) => {
     setSelecionadosIds(prev => 
       prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]
@@ -97,13 +96,13 @@ export function useHistorico(itensPorPagina = 5) {
     if (selecionadosIds.length === atendimentosFiltrados.length && atendimentosFiltrados.length > 0) {
       setSelecionadosIds([]);
     } else {
-      setSelecionadosIds(atendimentosFiltrados.map(os => os.id));
+      setSelecionadosIds(atendimentosFiltrados.map(os => os.id || os._id));
     }
   };
 
   const obterItensSelecionados = () => {
     return todosAtendimentos
-      .filter(os => selecionadosIds.includes(os.id))
+      .filter(os => selecionadosIds.includes(os.id || os._id))
       .sort((a, b) => {
         const dtA = extrairData(a.data_entrada) || 0;
         const dtB = extrairData(b.data_entrada) || 0;
@@ -119,12 +118,10 @@ export function useHistorico(itensPorPagina = 5) {
     setSelecionadosIds([]);
 
     if (!termo) {
-      // Se a busca for limpa, volta para o padrão do mês vigente
       setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(todosAtendimentos));
       return;
     }
 
-    // Se houver busca textual (S/N, Modelo, OS ou Cliente), pesquisa no histórico completo
     const resultado = todosAtendimentos.filter(os => {
       const serialMatch = os.serial ? String(os.serial).toLowerCase().includes(termo) : false;
       const modeloMatch = os.modelo ? String(os.modelo).toLowerCase().includes(termo) : false;
@@ -142,7 +139,6 @@ export function useHistorico(itensPorPagina = 5) {
     setDiaSelecionado(null);
     setPaginaAtual(1);
     setSelecionadosIds([]);
-    // Reseta para o mês vigente
     setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(todosAtendimentos));
   };
 
@@ -151,7 +147,6 @@ export function useHistorico(itensPorPagina = 5) {
     setSelecionadosIds([]);
     if (diaSelecionado && mesmoDia(diaSelecionado, data)) {
       setDiaSelecionado(null);
-      // Ao desmarcar o dia do calendário, retorna ao mês vigente
       setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(todosAtendimentos));
       return;
     }
@@ -177,24 +172,41 @@ export function useHistorico(itensPorPagina = 5) {
 
   const iniciarEdicao = (os, e) => {
     e.stopPropagation();
-    setEditandoId(os.id);
-    setCardAbertoId(os.id);
+    const targetId = os.id || os._id;
+    setEditandoId(targetId);
+    setCardAbertoId(targetId);
+    
+    // Tratamento para garantir que pecas_utilizadas venha como string formatada para o input
+    let pecasStr = '';
+    if (Array.isArray(os.pecas_utilizadas)) {
+      pecasStr = os.pecas_utilizadas.join(', ');
+    } else if (typeof os.pecas_utilizadas === 'string') {
+      pecasStr = os.pecas_utilizadas;
+    }
+
     setDadosEdicao({
       status: os.status || 'Em Aberto',
       defeito: os.defeito || '',
       relatorio_tecnico: os.relatorio_tecnico || '',
-      contador_final: os.contador_final || '',
-      pecas_utilizadas: Array.isArray(os.pecas_utilizadas) ? os.pecas_utilizadas.join(', ') : ''
+      contador_final: os.contador_final !== undefined && os.contador_final !== null ? os.contador_final : '',
+      pecas_utilizadas: pecasStr
     });
   };
 
+  // Função auxiliar para atualizar campos individualmente de forma limpa
+  const handleMudancaCampoEdicao = (campo, valor) => {
+    setDadosEdicao(prev => ({
+      ...prev,
+      [campo]: valor
+    }));
+  };
+
   const handleSalvarEdicao = async (id, e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     setSalvando(true);
 
     try {
-      const docRef = doc(db, "atendimentos", id);
-      const pecasArray = dadosEdicao.pecas_utilizadas
+      const pecasArray = typeof dadosEdicao.pecas_utilizadas === 'string'
         ? dadosEdicao.pecas_utilizadas.split(',').map(p => p.trim()).filter(Boolean)
         : [];
 
@@ -204,17 +216,18 @@ export function useHistorico(itensPorPagina = 5) {
         relatorio_tecnico: dadosEdicao.relatorio_tecnico,
         contador_final: Number(dadosEdicao.contador_final) || 0,
         pecas_utilizadas: pecasArray,
-        ultima_atualizacao: serverTimestamp()
+        ultima_atualizacao: new Date().toISOString()
       };
 
       if (dadosEdicao.status === 'Finalizado') {
-        payloadAtualizacao.data_finalizacao = serverTimestamp();
+        payloadAtualizacao.data_finalizacao = new Date().toISOString();
       }
 
-      await updateDoc(docRef, payloadAtualizacao);
+      await api.atualizarAtendimento(id, payloadAtualizacao);
 
       const listaAtualizada = todosAtendimentos.map(item => {
-        if (item.id === id) {
+        const itemId = item.id || item._id;
+        if (itemId === id) {
           return {
             ...item,
             ...payloadAtualizacao,
@@ -265,7 +278,6 @@ export function useHistorico(itensPorPagina = 5) {
   const mesAnterior = () => setDataAtual(new Date(dataAtual.getFullYear(), dataAtual.getMonth() - 1, 1));
   const proximoMes = () => setDataAtual(new Date(dataAtual.getFullYear(), dataAtual.getMonth() + 1, 1));
 
-  // Cálculo da Paginação
   const totalPaginas = Math.ceil(atendimentosFiltrados.length / itensPorPagina);
   const inicioIndice = (paginaAtual - 1) * itensPorPagina;
   const atendimentosPaginados = atendimentosFiltrados.slice(inicioIndice, inicioIndice + itensPorPagina);
@@ -294,6 +306,7 @@ export function useHistorico(itensPorPagina = 5) {
     salvando,
     dadosEdicao,
     setDadosEdicao,
+    handleMudancaCampoEdicao, // <-- Nova função auxiliar exportada
     paginaAtual,
     setPaginaAtual,
     totalPaginas,

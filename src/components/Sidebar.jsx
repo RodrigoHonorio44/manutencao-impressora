@@ -13,7 +13,6 @@ import {
   Menu, 
   X 
 } from 'lucide-react';
-import { auth } from '../firebase/config';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -21,6 +20,10 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
+
+  // Tenta recuperar o nome do usuário salvo no localStorage (caso exista)
+  const usuarioSalvo = JSON.parse(localStorage.getItem('usuario') || '{}');
+  const nomeUsuario = usuarioSalvo.nome || 'Rodrigo Honório';
 
   const menuItems = [
     { icon: <LayoutDashboard size={20} />, label: 'Dashboard', path: '/home' },
@@ -34,10 +37,12 @@ export default function Sidebar() {
   ];
 
   const handleLogout = () => {
-    auth.signOut().then(() => {
-      toast.success('Sessão encerrada.');
-      navigate('/');
-    });
+    // Remove os dados de sessão do localStorage
+    localStorage.removeItem('usuario');
+    localStorage.removeItem('token');
+    
+    toast.success('Sessão encerrada.');
+    navigate('/');
   };
 
   const handleNavigation = (path) => {
@@ -109,7 +114,7 @@ export default function Sidebar() {
             <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center shrink-0">
               <User size={16} />
             </div>
-            <span className="text-sm font-medium text-slate-300 truncate">Rodrigo Honório</span>
+            <span className="text-sm font-medium text-slate-300 truncate">{nomeUsuario}</span>
           </div>
           <button 
             onClick={handleLogout}

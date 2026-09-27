@@ -47,7 +47,7 @@ export default function Historico() {
     setEditandoId,
     salvando,
     dadosEdicao,
-    setDadosEdicao,
+    handleMudancaCampoEdicao,
     paginaAtual,
     setPaginaAtual,
     totalPaginas,
@@ -67,7 +67,7 @@ export default function Historico() {
   } = useHistorico(5);
 
   const todosDaPaginaSelecionados = atendimentosFiltrados.length > 0 && 
-    atendimentosFiltrados.every(os => selecionadosIds.includes(os.id));
+    atendimentosFiltrados.every(os => selecionadosIds.includes(os.id || os._id));
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-5 bg-slate-50 min-h-screen max-w-5xl mx-auto">
@@ -247,11 +247,12 @@ export default function Historico() {
           </div>
         ) : (
           atendimentosFiltrados.map((os) => {
+            const osId = os.id || os._id;
             const dtEntrada = extrairData(os.data_entrada);
             const dtFinalizacao = extrairData(os.data_finalizacao);
-            const isAberto = cardAbertoId === os.id;
-            const isEditando = editandoId === os.id;
-            const isSelecionado = selecionadosIds.includes(os.id);
+            const isAberto = cardAbertoId === osId;
+            const isEditando = editandoId === osId;
+            const isSelecionado = selecionadosIds.includes(osId);
 
             const contadorFinal = Number(os.contador_final) || 0;
             const contadorAnterior = os.ultimo_contador_anterior ? Number(os.ultimo_contador_anterior) : null;
@@ -260,7 +261,7 @@ export default function Historico() {
 
             return (
               <div 
-                key={os.id} 
+                key={osId} 
                 className={`bg-white rounded-2xl border transition relative overflow-hidden ${
                   isSelecionado ? 'border-blue-400 ring-2 ring-blue-100 shadow-md' : 'border-slate-200 hover:border-slate-300 shadow-sm'
                 }`}
@@ -269,7 +270,7 @@ export default function Historico() {
 
                 {/* Cabeçalho do Card */}
                 <div 
-                  onClick={() => toggleCard(os.id)}
+                  onClick={() => toggleCard(osId)}
                   className="p-4 pl-5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 transition"
                 >
                   <div className="flex items-start gap-3">
@@ -278,7 +279,7 @@ export default function Historico() {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        toggleSelecionar(os.id);
+                        toggleSelecionar(osId);
                       }}
                       className="mt-0.5 text-slate-400 hover:text-blue-600 transition"
                     >
@@ -302,7 +303,7 @@ export default function Historico() {
                       </div>
 
                       <h3 className="font-bold text-slate-800 text-sm sm:text-base">
-                        {os.marca} - {os.modelo}
+                        {os.marca} {os.modelo}
                       </h3>
                       <p className="text-xs text-slate-500 font-mono">S/N: {os.serial}</p>
                     </div>
@@ -355,7 +356,7 @@ export default function Historico() {
                 {isAberto && (
                   <div className="p-4 pl-5 pt-0 border-t border-slate-100 space-y-3 bg-slate-50/50 text-xs sm:text-sm animate-in fade-in duration-150">
                     {isEditando ? (
-                      <form onSubmit={(e) => handleSalvarEdicao(os.id, e)} className="space-y-3 mt-3 bg-white p-4 rounded-xl border border-blue-200">
+                      <form onSubmit={(e) => handleSalvarEdicao(osId, e)} className="space-y-3 mt-3 bg-white p-4 rounded-xl border border-blue-200">
                         <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                           <span className="font-bold text-blue-700 text-xs uppercase flex items-center gap-1">
                             <Edit3 size={14}/> Editar Manutenção
@@ -374,7 +375,7 @@ export default function Historico() {
                             <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Status</label>
                             <select
                               value={dadosEdicao.status}
-                              onChange={(e) => setDadosEdicao({...dadosEdicao, status: e.target.value})}
+                              onChange={(e) => handleMudancaCampoEdicao('status', e.target.value)}
                               className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 bg-white font-medium"
                             >
                               <option value="Em Aberto">Em Aberto</option>
@@ -389,7 +390,7 @@ export default function Historico() {
                             <input
                               type="number"
                               value={dadosEdicao.contador_final}
-                              onChange={(e) => setDadosEdicao({...dadosEdicao, contador_final: e.target.value})}
+                              onChange={(e) => handleMudancaCampoEdicao('contador_final', e.target.value)}
                               className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 font-mono"
                             />
                           </div>
@@ -400,7 +401,7 @@ export default function Historico() {
                           <input
                             type="text"
                             value={dadosEdicao.defeito}
-                            onChange={(e) => setDadosEdicao({...dadosEdicao, defeito: e.target.value})}
+                            onChange={(e) => handleMudancaCampoEdicao('defeito', e.target.value)}
                             className="w-full p-2 border border-slate-200 rounded-lg text-slate-700"
                           />
                         </div>
@@ -410,7 +411,7 @@ export default function Historico() {
                           <textarea
                             rows={3}
                             value={dadosEdicao.relatorio_tecnico}
-                            onChange={(e) => setDadosEdicao({...dadosEdicao, relatorio_tecnico: e.target.value})}
+                            onChange={(e) => handleMudancaCampoEdicao('relatorio_tecnico', e.target.value)}
                             className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 leading-relaxed"
                           />
                         </div>
@@ -421,7 +422,7 @@ export default function Historico() {
                             type="text"
                             placeholder="Ex: Película de fusão, Rolo pressor, Pickup roller"
                             value={dadosEdicao.pecas_utilizadas}
-                            onChange={(e) => setDadosEdicao({...dadosEdicao, pecas_utilizadas: e.target.value})}
+                            onChange={(e) => handleMudancaCampoEdicao('pecas_utilizadas', e.target.value)}
                             className="w-full p-2 border border-slate-200 rounded-lg text-slate-700"
                           />
                         </div>
@@ -436,7 +437,7 @@ export default function Historico() {
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => handleSalvarEdicao(os.id, e)}
+                            onClick={(e) => handleSalvarEdicao(osId, e)}
                             disabled={salvando}
                             className="px-4 py-2 rounded-lg text-white bg-emerald-600 hover:bg-emerald-700 font-bold text-xs uppercase flex items-center gap-1 disabled:opacity-50"
                           >
@@ -522,7 +523,7 @@ export default function Historico() {
                             }}
                             className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-sm"
                           >
-                            <Printer size={14} /> Imprimir Laudo Técnico
+                            <Printer size= {14} /> Imprimir Laudo Técnico
                           </button>
                         </div>
                       </>

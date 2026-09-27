@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { db } from '../firebase/config';
-import { collection, getDocs, query, where, runTransaction, doc, arrayUnion, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { api } from '../services/api';
 import toast from 'react-hot-toast';
 import { X, Package, Clock, CheckCircle, FileText, Gauge, History, Plus } from 'lucide-react';
 
@@ -15,31 +14,26 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
   useEffect(() => {
     const buscarDados = async () => {
       try {
+        // Busca histórico do serial e estoque através da API
+        const todosAtendimentos = await api.getAtendimentos();
+        
         if (chamado?.serial) {
           const serialLimpo = String(chamado.serial).toLowerCase().trim();
-          const qHistorico = query(
-            collection(db, "atendimentos"),
-            where("serial_lc", "==", serialLimpo)
-          );
-          
-          const snapHist = await getDocs(qHistorico);
           const statusConcluidos = ['finalizado', 'faturado', 'entregue'];
 
-          const docsHist = snapHist.docs
-            .map(d => ({ id: d.id, ...d.data() }))
+          const docsHist = todosAtendimentos
             .filter(d => {
+              const itemSerial = String(d.serial || '').toLowerCase().trim();
               const statusValido = statusConcluidos.includes((d.status || '').toLowerCase().trim());
               const temContador = d.contador_final !== undefined && d.contador_final !== null && d.contador_final !== '';
-              const ehOutraOS = String(d.os).trim() !== String(chamado.os).trim();
+              const ehOutraOS = String(d.os || d._id || d.id).trim() !== String(chamado.os || chamado._id || chamado.id).trim();
 
-              return statusValido && temContador && ehOutraOS;
+              return itemSerial === serialLimpo && statusValido && temContador && ehOutraOS;
             });
           
           docsHist.sort((a, b) => {
             const getMillis = (data) => {
               if (!data) return 0;
-              if (typeof data.toMillis === 'function') return data.toMillis();
-              if (typeof data.toDate === 'function') return data.toDate().getTime();
               return new Date(data).getTime() || 0;
             };
 
@@ -56,8 +50,8 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
           }
         }
 
-        const querySnapshot = await getDocs(collection(db, "estoque_pecas"));
-        const listaDados = querySnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Busca o estoque de peças através da API
+        const listaDados = await api.getEstoque ? await api.getEstoque() : [];
         
         const marcaOs = (chamado.marca || '').toLowerCase().trim();
         const modeloOs = (chamado.modelo || '').toLowerCase().trim();
@@ -139,50 +133,38 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     if (peca.qtd <= 0) return toast.error("Sem estoque disponível!");
     const loading = toast.loading("Dando baixa no insumo...");
     
-    const pecaRef = doc(db, "estoque_pecas", peca.id);
-    const chamadoRef = doc(db, "atendimentos", chamado.id);
-    const historicoRef = collection(db, "historico_lotes_zerados");
-
     try {
-      await runTransaction(db, async (transaction) => {
-        const pDoc = await transaction.get(pecaRef);
-        if (!pDoc.exists()) throw "Peça não encontrada no banco!";
+      const pecaId = peca._id || peca.id;
+      const chamadoId = chamado._id || chamado.id;
 
-        const dadosPeca = pDoc.data();
-        const novaQtd = dadosPeca.qtd - 1;
+      const nomeFormatado = (peca.nome || '').toLowerCase().trim();
+      const novoRelatorio = relatorio
+        ? `${relatorio}, trocado ${nomeFormatado}`
+        : `Efetuada a troca de: ${nomeFormatado}`;
 
-        if (novaQtd <= 0) {
-          transaction.set(doc(historicoRef), {
-            marca: dadosPeca.marca,
-            modelo: dadosPeca.modelo,
-            nome: dadosPeca.nome,
-            qtd: 0,
-            data_entrada: dadosPeca.data_entrada,
-            data_fim: serverTimestamp()
-          });
+      // Atualiza o estoque e a OS via API
+      if (api.darBaixaEstoque) {
+        await api.darBaixaEstoque(pecaId, 1);
+      }
 
-          transaction.delete(pecaRef);
-        } else {
-          transaction.update(pecaRef, { qtd: novaQtd });
-        }
-        
-        const nomeFormatado = (peca.nome || '').toLowerCase().trim();
-        const novoRelatorio = relatorio
-          ? `${relatorio}, trocado ${nomeFormatado}`
-          : `Efetuada a troca de: ${nomeFormatado}`;
-        
-        setRelatorio(novoRelatorio);
+      const pecasAtuais = chamado.pecas_utilizadas || [];
+      const novasPecas = [...pecasAtuais, nomeFormatado];
 
-        transaction.update(chamadoRef, {
-          pecas_utilizadas: arrayUnion(nomeFormatado),
-          relatorio_tecnico: novoRelatorio,
-          status: 'Em Manutenção'
-        });
-      });
+      const payloadAtualizacao = {
+        pecas_utilizadas: novasPecas,
+        relatorio_tecnico: novoRelatorio,
+        status: 'Em Manutenção'
+      };
+
+      await api.atualizarAtendimento(chamadoId, payloadAtualizacao);
+
+      setRelatorio(novoRelatorio);
+      chamado.pecas_utilizadas = novasPecas; // Atualiza localmente
 
       setPecasEstoque(prev =>
         prev.map(p => {
-          if (p.id === peca.id) {
+          const pId = p._id || p.id;
+          if (pId === pecaId) {
             return { ...p, qtd: p.qtd - 1 };
           }
           return p;
@@ -201,20 +183,26 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     const loading = toast.loading("Registrando peça...");
 
     const nomeFormatado = pecaAvulsa.toLowerCase().trim();
-    const chamadoRef = doc(db, "atendimentos", chamado.id);
+    const chamadoId = chamado._id || chamado.id;
 
     try {
       const novoRelatorio = relatorio
         ? `${relatorio}, trocado ${nomeFormatado}`
         : `Efetuada a troca de: ${nomeFormatado}`;
 
-      await updateDoc(chamadoRef, {
-        pecas_utilizadas: arrayUnion(nomeFormatado),
+      const pecasAtuais = chamado.pecas_utilizadas || [];
+      const novasPecas = [...pecasAtuais, nomeFormatado];
+
+      const payloadAtualizacao = {
+        pecas_utilizadas: novasPecas,
         relatorio_tecnico: novoRelatorio,
         status: 'Em Manutenção'
-      });
+      };
+
+      await api.atualizarAtendimento(chamadoId, payloadAtualizacao);
 
       setRelatorio(novoRelatorio);
+      chamado.pecas_utilizadas = novasPecas; // Atualiza localmente
       setPecaAvulsa('');
       toast.success("Peça adicionada à OS!", { id: loading });
     } catch (e) {
@@ -225,15 +213,19 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
 
   const salvarPendencia = async () => {
     if(!pendencia) return toast.error("Digite o que está faltando.");
+    const chamadoId = chamado._id || chamado.id;
     try {
-      await updateDoc(doc(db, "atendimentos", chamado.id), {
+      await api.atualizarAtendimento(chamadoId, {
         status: 'Aguardando Peça',
         peca_pendente: pendencia.toLowerCase().trim(),
         relatorio_tecnico: relatorio
       });
       toast.success("Status: Aguardando Peça");
       onClose();
-    } catch (e) { toast.error("Erro ao salvar pendência."); }
+    } catch (e) { 
+      console.error(e);
+      toast.error("Erro ao salvar pendência."); 
+    }
   };
 
   const finalizarOS = async () => {
@@ -245,19 +237,26 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
     }
 
     const loading = toast.loading("Finalizando...");
+    const chamadoId = chamado._id || chamado.id;
     try {
-      await updateDoc(doc(db, "atendimentos", chamado.id), {
-        status: chamado.status === 'Faturado' ? 'Faturado' : 'Finalizado',
+      const statusFinal = chamado.status === 'Faturado' ? 'Faturado' : 'Finalizado';
+      
+      await api.atualizarAtendimento(chamadoId, {
+        status: statusFinal,
         relatorio_tecnico: relatorio,
         contador_final: numContadorFinal,
         ultimo_contador_anterior: ultimoContador !== null ? numUltimoContador : null,
         paginas_rodadas: Number(paginasRodadas),
         serial_lc: (chamado.serial || '').toLowerCase().trim(),
-        data_finalizacao: serverTimestamp()
+        data_finalizacao: new Date().toISOString()
       });
+
       toast.success("OS Finalizada com sucesso!", { id: loading });
       onClose();
-    } catch (e) { toast.error("Erro ao finalizar.", { id: loading }); }
+    } catch (e) { 
+      console.error(e);
+      toast.error("Erro ao finalizar.", { id: loading }); 
+    }
   };
 
   return (
@@ -268,7 +267,7 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
         <div className="p-4 md:p-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
           <div>
             <h2 className="text-lg md:text-xl font-black text-slate-800 uppercase">Gerenciar OS</h2>
-            <p className="text-xs text-blue-600 font-bold uppercase">{chamado.marca} {chamado.modelo} - SN: {chamado.serial}</p>
+            <p className="text-xs text-blue-600 font-bold uppercase">{chamado.marca} {chamado.modelo} - S/N: {chamado.serial}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20}/></button>
         </div>
@@ -281,16 +280,19 @@ export default function ModalGerenciarOS({ chamado, onClose }) {
             <div>
               <h3 className="flex items-center gap-2 font-bold text-slate-500 text-[10px] uppercase tracking-widest mb-2"><Package size={14}/> Estoque Disponível</h3>
               <div className="space-y-2 max-h-36 md:max-h-48 overflow-y-auto pr-1">
-                {pecasEstoque.map(peca => (
-                  <button
-                    key={peca.id}
-                    onClick={() => adicionarPeca(peca)}
-                    className="w-full p-3 text-left border rounded-xl hover:border-blue-500 active:bg-blue-100 md:hover:bg-blue-50 transition-all flex justify-between items-center group"
-                  >
-                    <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700 break-words max-w-[80%]">{peca.nome}</span>
-                    <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500 shrink-0">{peca.qtd}</span>
-                  </button>
-                ))}
+                {pecasEstoque.map(peca => {
+                  const pecaId = peca._id || peca.id;
+                  return (
+                    <button
+                      key={pecaId}
+                      onClick={() => adicionarPeca(peca)}
+                      className="w-full p-3 text-left border rounded-xl hover:border-blue-500 active:bg-blue-100 md:hover:bg-blue-50 transition-all flex justify-between items-center group"
+                    >
+                      <span className="text-xs font-bold text-slate-700 group-hover:text-blue-700 break-words max-w-[80%]">{peca.nome}</span>
+                      <span className="text-[10px] bg-slate-100 px-2 py-1 rounded-lg font-black text-slate-500 shrink-0">{peca.qtd}</span>
+                    </button>
+                  );
+                })}
                 {pecasEstoque.length === 0 && (
                   <p className="text-xs text-slate-400 italic py-2">Nenhum lote ativo com saldo encontrado para esse modelo.</p>
                 )}
