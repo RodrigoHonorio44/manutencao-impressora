@@ -69,6 +69,32 @@ export default function Historico() {
   const todosDaPaginaSelecionados = atendimentosFiltrados.length > 0 && 
     atendimentosFiltrados.every(os => selecionadosIds.includes(os.id || os._id));
 
+  // Helper para formatar objetos Mongo {$date: "..."}, instâncias Date ou ISO Strings
+  const formatarDataBr = (valorData) => {
+    if (!valorData) return null;
+    let d;
+    if (typeof valorData === 'object' && valorData.$date) {
+      d = new Date(valorData.$date);
+    } else if (valorData instanceof Date) {
+      d = valorData;
+    } else {
+      d = extrairData(valorData) || new Date(valorData);
+    }
+    return isNaN(d?.getTime()) ? null : d.toLocaleDateString('pt-BR');
+  };
+
+  // Helper para normalizar e separar a lista de peças em array
+  const obterListaPecas = (pecas) => {
+    if (!pecas) return [];
+    if (Array.isArray(pecas)) {
+      return pecas.flatMap(p => typeof p === 'string' ? p.split(',') : p).map(p => p.trim()).filter(Boolean);
+    }
+    if (typeof pecas === 'string') {
+      return pecas.split(',').map(p => p.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-5 bg-slate-50 min-h-screen max-w-5xl mx-auto">
       
@@ -79,7 +105,7 @@ export default function Historico() {
           <p className="text-xs sm:text-sm text-slate-500">Consulte, edite e emita laudos técnicos das manutenções.</p>
         </div>
 
-        {/* Botão de Laudo Consolidado (Quando há itens selecionados) */}
+        {/* Botão de Laudo Consolidado */}
         {selecionadosIds.length > 0 && (
           <button
             type="button"
@@ -102,8 +128,8 @@ export default function Historico() {
                 type="text"
                 placeholder="Digite o S/N, Modelo, Cliente ou N° da OS..."
                 value={busca}
-                onChange={(e) => setBusca(e.target.value)}
-                className="w-full py-2.5 bg-transparent outline-none text-slate-700 font-medium text-sm"
+                onChange={(e) => setBusca(e.target.value.toLowerCase())}
+                className="w-full py-2.5 bg-transparent outline-none text-slate-700 font-medium text-sm lowercase"
               />
               {busca && (
                 <button 
@@ -248,16 +274,24 @@ export default function Historico() {
         ) : (
           atendimentosFiltrados.map((os) => {
             const osId = os.id || os._id;
-            const dtEntrada = extrairData(os.data_entrada);
-            const dtFinalizacao = extrairData(os.data_finalizacao);
+            const osNumero = os.os || os.numero_os || 'Sem Número';
+            
+            const dtEntrada = formatarDataBr(os.data_entrada);
+            const dtFinalizacao = formatarDataBr(os.data_finalizacao);
+            const dtAnterior = formatarDataBr(os.data_contador_anterior);
+            const dtAtualContador = dtFinalizacao || dtEntrada || 'Data N/D';
+
             const isAberto = cardAbertoId === osId;
             const isEditando = editandoId === osId;
             const isSelecionado = selecionadosIds.includes(osId);
 
             const contadorFinal = Number(os.contador_final) || 0;
-            const contadorAnterior = os.ultimo_contador_anterior ? Number(os.ultimo_contador_anterior) : null;
-            const paginasRegistradas = Number(os.paginas_rodadas) || 0;
-            const diferencaCalculada = contadorAnterior !== null ? (contadorFinal - contadorAnterior) : paginasRegistradas;
+            const contadorAnterior = os.ultimo_contador_anterior !== null && os.ultimo_contador_anterior !== undefined
+              ? Number(os.ultimo_contador_anterior) 
+              : null;
+            
+            const paginasRodadas = Number(os.paginas_rodadas) || 0;
+            const listaPecas = obterListaPecas(os.pecas_utilizadas);
 
             return (
               <div 
@@ -274,7 +308,6 @@ export default function Historico() {
                   className="p-4 pl-5 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/80 transition"
                 >
                   <div className="flex items-start gap-3">
-                    {/* Checkbox Individual */}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -293,7 +326,7 @@ export default function Historico() {
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded">
-                          OS: {os.os || 'Sem Número'}
+                          OS: {osNumero}
                         </span>
                         <span className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
                           os.status === 'Finalizado' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -312,11 +345,11 @@ export default function Historico() {
                   <div className="flex items-center justify-between sm:justify-end gap-2 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
                     <div className="text-left sm:text-right text-xs text-slate-400 font-medium space-y-0.5 mr-1">
                       <div className="flex items-center gap-1">
-                        <CalendarIcon size={12}/> Entrada: {dtEntrada ? dtEntrada.toLocaleDateString('pt-BR') : 'N/D'}
+                        <CalendarIcon size={12}/> Entrada: {dtEntrada || 'N/D'}
                       </div>
                       {dtFinalizacao && (
                         <div className="flex items-center gap-1 text-emerald-600">
-                          <CheckCircle size={12}/> Fim: {dtFinalizacao.toLocaleDateString('pt-BR')}
+                          <CheckCircle size={12}/> Fim: {dtFinalizacao}
                         </div>
                       )}
                     </div>
@@ -401,8 +434,8 @@ export default function Historico() {
                           <input
                             type="text"
                             value={dadosEdicao.defeito}
-                            onChange={(e) => handleMudancaCampoEdicao('defeito', e.target.value)}
-                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700"
+                            onChange={(e) => handleMudancaCampoEdicao('defeito', e.target.value.toLowerCase())}
+                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 lowercase"
                           />
                         </div>
 
@@ -411,8 +444,8 @@ export default function Historico() {
                           <textarea
                             rows={3}
                             value={dadosEdicao.relatorio_tecnico}
-                            onChange={(e) => handleMudancaCampoEdicao('relatorio_tecnico', e.target.value)}
-                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 leading-relaxed"
+                            onChange={(e) => handleMudancaCampoEdicao('relatorio_tecnico', e.target.value.toLowerCase())}
+                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 leading-relaxed lowercase"
                           />
                         </div>
 
@@ -420,10 +453,10 @@ export default function Historico() {
                           <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Peças Trocadas (separadas por vírgula)</label>
                           <input
                             type="text"
-                            placeholder="Ex: Película de fusão, Rolo pressor, Pickup roller"
+                            placeholder="ex: película de fusão, rolo pressor, pickup roller"
                             value={dadosEdicao.pecas_utilizadas}
-                            onChange={(e) => handleMudancaCampoEdicao('pecas_utilizadas', e.target.value)}
-                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700"
+                            onChange={(e) => handleMudancaCampoEdicao('pecas_utilizadas', e.target.value.toLowerCase())}
+                            className="w-full p-2 border border-slate-200 rounded-lg text-slate-700 lowercase"
                           />
                         </div>
 
@@ -457,10 +490,11 @@ export default function Historico() {
                           </div>
                           <div>
                             <p className="font-bold uppercase text-[10px] text-blue-600 mb-0.5">Defeito Relatado</p>
-                            <p className="text-slate-600 italic">{os.defeito || "Não especificado"}</p>
+                            <p className="text-slate-600 italic">{os.defeito || "não especificado"}</p>
                           </div>
                         </div>
 
+                        {/* Bloco dos Contadores com Datas e Dias Decorridos */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-3 rounded-xl border border-slate-200">
                           <div>
                             <p className="font-bold uppercase text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
@@ -468,6 +502,9 @@ export default function Historico() {
                             </p>
                             <p className="font-mono font-bold text-slate-800 text-sm">
                               {contadorFinal.toLocaleString('pt-BR')} <span className="text-[10px] text-slate-400 font-sans">pág</span>
+                            </p>
+                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+                              {dtAtualContador}
                             </p>
                           </div>
 
@@ -478,6 +515,9 @@ export default function Historico() {
                             <p className="font-mono font-medium text-slate-600 text-sm">
                               {contadorAnterior !== null ? `${contadorAnterior.toLocaleString('pt-BR')} pág` : 'Primeiro Registro'}
                             </p>
+                            <p className="text-[10px] text-slate-500 font-semibold mt-0.5">
+                              {dtAnterior || 'Sem registro anterior'}
+                            </p>
                           </div>
 
                           <div>
@@ -485,7 +525,12 @@ export default function Historico() {
                               <Printer size={12}/> Rodadas no Período
                             </p>
                             <p className="font-mono font-bold text-blue-700 text-sm">
-                              +{diferencaCalculada.toLocaleString('pt-BR')} <span className="text-[10px] font-sans">pág</span>
+                              +{paginasRodadas.toLocaleString('pt-BR')} <span className="text-[10px] font-sans">pág</span>
+                            </p>
+                            <p className="text-[10px] text-blue-600 font-bold mt-0.5">
+                              {os.dias_decorridos !== null && os.dias_decorridos !== undefined
+                                ? `${os.dias_decorridos} dia(s) decorrido(s)`
+                                : 'Período N/D'}
                             </p>
                           </div>
                         </div>
@@ -495,17 +540,17 @@ export default function Historico() {
                             <FileText size={13}/> Relatório Técnico:
                           </p>
                           <p className="text-slate-700 bg-white p-3 rounded-xl border border-slate-200 font-medium whitespace-pre-line text-xs leading-relaxed">
-                            {os.relatorio_tecnico || "Nenhum relatório detalhado foi registrado."}
+                            {os.relatorio_tecnico || "nenhum relatório detalhado foi registrado."}
                           </p>
                         </div>
 
-                        {os.pecas_utilizadas?.length > 0 && (
+                        {listaPecas.length > 0 && (
                           <div>
                             <p className="flex items-center gap-1 text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">
                               <Package size={13}/> Peças Trocadas:
                             </p>
                             <div className="flex flex-wrap gap-1.5">
-                              {os.pecas_utilizadas.map((p, idx) => (
+                              {listaPecas.map((p, idx) => (
                                 <span key={idx} className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
                                   {p}
                                 </span>
@@ -523,7 +568,7 @@ export default function Historico() {
                             }}
                             className="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition shadow-sm"
                           >
-                            <Printer size= {14} /> Imprimir Laudo Técnico
+                            <Printer size={14} /> Imprimir Laudo Técnico
                           </button>
                         </div>
                       </>

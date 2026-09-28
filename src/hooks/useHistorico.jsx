@@ -37,11 +37,16 @@ export function useHistorico(itensPorPagina = 5) {
     carregarTodosAtendimentos();
   }, []);
 
+  // Extrai data suportando MongoDB {$date: "..."}, Firestore e Strings
   const extrairData = (dataFirestore) => {
     if (!dataFirestore) return null;
+    if (typeof dataFirestore === 'object' && dataFirestore.$date) {
+      return new Date(dataFirestore.$date);
+    }
     if (dataFirestore.toDate) return dataFirestore.toDate();
     if (dataFirestore.seconds) return new Date(dataFirestore.seconds * 1000);
-    return new Date(dataFirestore);
+    const d = new Date(dataFirestore);
+    return isNaN(d.getTime()) ? null : d;
   };
 
   const mesmoDia = (d1, d2) => {
@@ -72,51 +77,72 @@ export function useHistorico(itensPorPagina = 5) {
       
       // 1. Normaliza os dados e extrai o contador do texto caso venha vazio nas OS antigas
       const listaNormalizada = listaBruta.map(os => {
-        let contadorFinal = os.contador_final;
+        let contadorFinal = os.contador_final || os.contador_atual || os.contador;
         if ((!contadorFinal || contadorFinal === 0) && os.relatorio_tecnico) {
           const match = os.relatorio_tecnico.match(/contador[:\s]*([\d\.]+)/i);
           if (match) {
             contadorFinal = Number(match[1].replace(/\./g, ''));
           }
         }
+
+        const dataObj = extrairData(os.data_finalizacao) || extrairData(os.data_entrada) || new Date(0);
+
         return {
           ...os,
           contador_final: Number(contadorFinal) || 0,
-          dataObj: extrairData(os.data_entrada) || new Date(0)
+          dataObj
         };
       });
 
       // 2. Ordena cronologicamente do mais ANTIGO para o mais RECENTE para rastrear a sequência do serial
       const listaCronologica = [...listaNormalizada].sort((a, b) => a.dataObj - b.dataObj);
 
-      const ultimosContadoresPorSerial = {};
+      const historicoPorSerial = {}; // Guarda { ultimoContador, ultimaData }
+
       const listaComCalculo = listaCronologica.map(os => {
         const serial = os.serial ? String(os.serial).trim().toLowerCase() : 'desconhecido';
         const contadorAtual = os.contador_final;
+        const dataAtualOS = os.dataObj;
         
         let contadorAnterior = os.ultimo_contador_anterior;
+        let dataContadorAnterior = os.data_contador_anterior;
         let rodadasPeriodo = os.paginas_rodadas;
+        let diasDecorridos = null;
 
-        // Se a OS não tiver o cálculo salvo, calcula dinamicamente com base na anterior do mesmo serial
-        if (contadorAnterior === undefined || contadorAnterior === null) {
-          if (ultimosContadoresPorSerial[serial] !== undefined) {
-            contadorAnterior = ultimosContadoresPorSerial[serial];
-            rodadasPeriodo = contadorAtual >= contadorAnterior ? contadorAtual - contadorAnterior : 0;
-          } else {
-            contadorAnterior = 'Primeiro Registro';
-            rodadasPeriodo = 0;
+        if (historicoPorSerial[serial]) {
+          const registroAnterior = historicoPorSerial[serial];
+          
+          if (contadorAnterior === undefined || contadorAnterior === null) {
+            contadorAnterior = registroAnterior.ultimoContador;
+          }
+
+          dataContadorAnterior = registroAnterior.ultimaData;
+          rodadasPeriodo = contadorAtual >= contadorAnterior ? contadorAtual - contadorAnterior : 0;
+          
+          if (dataContadorAnterior && dataAtualOS) {
+            const diffMs = Math.abs(dataAtualOS.getTime() - dataContadorAnterior.getTime());
+            diasDecorridos = Math.round(diffMs / (1000 * 60 * 60 * 24));
+          }
+        } else {
+          if (contadorAnterior === undefined || contadorAnterior === null) {
+            contadorAnterior = null;
           }
         }
 
         if (contadorAtual > 0) {
-          ultimosContadoresPorSerial[serial] = contadorAtual;
+          historicoPorSerial[serial] = {
+            ultimoContador: contadorAtual,
+            ultimaData: dataAtualOS
+          };
         }
 
         return {
           ...os,
           contador_final: contadorAtual,
           ultimo_contador_anterior: contadorAnterior,
-          paginas_rodadas: rodadasPeriodo
+          data_contador_anterior: dataContadorAnterior,
+          paginas_rodadas: rodadasPeriodo,
+          dias_decorridos: diasDecorridos
         };
       });
 
@@ -232,10 +258,10 @@ export function useHistorico(itensPorPagina = 5) {
 
     setDadosEdicao({
       status: os.status || 'Em Aberto',
-      defeito: os.defeito || '',
-      relatorio_tecnico: os.relatorio_tecnico || '',
+      defeito: os.defeito ? String(os.defeito).toLowerCase() : '',
+      relatorio_tecnico: os.relatorio_tecnico ? String(os.relatorio_tecnico).toLowerCase() : '',
       contador_final: os.contador_final !== undefined && os.contador_final !== null ? os.contador_final : '',
-      pecas_utilizadas: pecasStr
+      pecas_utilizadas: pecasStr.toLowerCase()
     });
   };
 
@@ -252,13 +278,13 @@ export function useHistorico(itensPorPagina = 5) {
 
     try {
       const pecasArray = typeof dadosEdicao.pecas_utilizadas === 'string'
-        ? dadosEdicao.pecas_utilizadas.split(',').map(p => p.trim()).filter(Boolean)
+        ? dadosEdicao.pecas_utilizadas.split(',').map(p => p.trim().toLowerCase()).filter(Boolean)
         : [];
 
       const payloadAtualizacao = {
         status: dadosEdicao.status,
-        defeito: dadosEdicao.defeito,
-        relatorio_tecnico: dadosEdicao.relatorio_tecnico,
+        defeito: String(dadosEdicao.defeito || '').toLowerCase(),
+        relatorio_tecnico: String(dadosEdicao.relatorio_tecnico || '').toLowerCase(),
         contador_final: Number(dadosEdicao.contador_final) || 0,
         pecas_utilizadas: pecasArray,
         ultima_atualizacao: new Date().toISOString()
@@ -270,7 +296,6 @@ export function useHistorico(itensPorPagina = 5) {
 
       await api.atualizarAtendimento(id, payloadAtualizacao);
 
-      // Recarrega todos os atendimentos para recalcular automaticamente as páginas rodadas de todo o histórico da máquina
       await carregarTodosAtendimentos();
 
       toast.success("Card atualizado com sucesso!");

@@ -1,19 +1,48 @@
 import React, { useState } from 'react';
 import { useHistorico } from '../hooks/useHistorico';
-import { Printer, AlertTriangle, TrendingDown, Wrench, BarChart3, ArrowLeft, RefreshCw, X, Calendar, FileText, User } from 'lucide-react';
+import { 
+  Printer, 
+  AlertTriangle, 
+  TrendingDown, 
+  Wrench, 
+  BarChart3, 
+  ArrowLeft, 
+  RefreshCw, 
+  X, 
+  Calendar, 
+  FileText, 
+  Gauge, 
+  Package 
+} from 'lucide-react';
 
 export function PaginaDashboard({ onVoltar }) {
-  const { todosAtendimentos, carregando } = useHistorico();
+  const { todosAtendimentos, carregando, extrairData } = useHistorico();
   const [equipamentoSelecionado, setEquipamentoSelecionado] = useState(null);
 
-  // Função auxiliar para extrair a data corretamente (seja string ou objeto MongoDB { $date })
-  const extrairData = (item) => {
-    const rawDate = item.data_entrada || item.data_finalizacao || item.data || item.created_at;
-    if (!rawDate) return null;
-    if (typeof rawDate === 'object' && rawDate.$date) {
-      return rawDate.$date;
+  // Helper para formatar qualquer tipo de data (incluindo Mongo {$date: "..."})
+  const formatarDataBr = (dataVal) => {
+    if (!dataVal) return null;
+    let d;
+    if (typeof dataVal === 'object' && dataVal.$date) {
+      d = new Date(dataVal.$date);
+    } else if (dataVal instanceof Date) {
+      d = dataVal;
+    } else {
+      d = extrairData(dataVal) || new Date(dataVal);
     }
-    return rawDate;
+    return isNaN(d?.getTime()) ? null : d.toLocaleDateString('pt-BR');
+  };
+
+  // Helper para normalizar e separar a lista de peças em array
+  const obterListaPecas = (pecas) => {
+    if (!pecas) return [];
+    if (Array.isArray(pecas)) {
+      return pecas.flatMap(p => typeof p === 'string' ? p.split(',') : p).map(p => p.trim()).filter(Boolean);
+    }
+    if (typeof pecas === 'string') {
+      return pecas.split(',').map(p => p.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   // Processa as estatísticas avançadas com base em todos os atendimentos
@@ -51,8 +80,8 @@ export function PaginaDashboard({ onVoltar }) {
     // Ordena os históricos de cada equipamento por data (mais recente primeiro)
     listaEquipamentos.forEach(eq => {
       eq.historicoAtendimentos.sort((a, b) => {
-        const dataA = new Date(extrairData(a) || 0);
-        const dataB = new Date(extrairData(b) || 0);
+        const dataA = extrairData(a.data_finalizacao) || extrairData(a.data_entrada) || new Date(0);
+        const dataB = extrairData(b.data_finalizacao) || extrairData(b.data_entrada) || new Date(0);
         return dataB - dataA;
       });
     });
@@ -72,7 +101,7 @@ export function PaginaDashboard({ onVoltar }) {
       totalGeralPaginas,
       totalGeralQuebras
     };
-  }, [todosAtendimentos]);
+  }, [todosAtendimentos, extrairData]);
 
   if (carregando) {
     return (
@@ -228,7 +257,7 @@ export function PaginaDashboard({ onVoltar }) {
       {/* MODAL DE HISTÓRICO DO EQUIPAMENTO */}
       {equipamentoSelecionado && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-slate-100">
             
             {/* Cabeçalho do Modal */}
             <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
@@ -260,52 +289,119 @@ export function PaginaDashboard({ onVoltar }) {
             </div>
 
             {/* Lista de Atendimentos */}
-            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
               {equipamentoSelecionado.historicoAtendimentos.map((osItem, idx) => {
-                const dataFormatada = extrairData(osItem);
-                const numeroOS = osItem.os || osItem.numero_os || osItem.id || 'N/A';
+                const osNumero = osItem.os || osItem.numero_os || 'Sem Número';
+                
+                const dtEntrada = formatarDataBr(osItem.data_entrada);
+                const dtFinalizacao = formatarDataBr(osItem.data_finalizacao);
+                const dtAnterior = formatarDataBr(osItem.data_contador_anterior);
+                const dtAtualContador = dtFinalizacao || dtEntrada || 'Data N/D';
+
+                const contadorFinal = Number(osItem.contador_final) || 0;
+                const contadorAnterior = osItem.ultimo_contador_anterior !== null && osItem.ultimo_contador_anterior !== undefined
+                  ? Number(osItem.ultimo_contador_anterior) 
+                  : null;
+                
+                const paginasRodadas = Number(osItem.paginas_rodadas) || 0;
+                const listaPecas = obterListaPecas(osItem.pecas_utilizadas);
                 const defeito = osItem.defeito || osItem.defeito_relatado;
                 const relatorio = osItem.relatorio_tecnico || osItem.servico_executado;
-                const tecnicoResp = osItem.tecnico || osItem.usuario;
 
                 return (
-                  <div key={osItem._id || osItem.id || idx} className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 p-4 rounded-xl space-y-2 transition">
+                  <div key={osItem._id || osItem.id || idx} className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 p-4 rounded-xl space-y-3 transition">
+                    
+                    {/* Linha Superior: Data + OS */}
                     <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-700/40 pb-2">
-                      <span className="flex items-center gap-1.5 font-medium text-slate-300">
-                        <Calendar size={14} className="text-blue-400" />
-                        {dataFormatada ? new Date(dataFormatada).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'Data não informada'}
-                      </span>
-                      <span className="bg-slate-700/60 px-2 py-0.5 rounded text-slate-200 font-mono">
-                        OS: {numeroOS}
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1 font-medium text-slate-300">
+                          <Calendar size={13} className="text-blue-400" />
+                          Entrada: {dtEntrada || 'N/D'}
+                        </span>
+                        {dtFinalizacao && (
+                          <span className="text-emerald-400 font-medium">
+                            Fim: {dtFinalizacao}
+                          </span>
+                        )}
+                      </div>
+                      <span className="bg-blue-600/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded font-mono font-bold">
+                        OS: {osNumero}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                    {/* Bloco Completo dos Contadores */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-900/60 p-3 rounded-lg border border-slate-800 text-xs">
                       <div>
-                        <span className="text-slate-400">Páginas Rodadas:</span>{' '}
-                        <strong className="text-emerald-400 font-semibold">{Number(osItem.paginas_rodadas || 0).toLocaleString('pt-BR')} págs</strong>
+                        <p className="font-bold uppercase text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
+                          <Gauge size={12}/> Contador Atual
+                        </p>
+                        <p className="font-mono font-bold text-slate-200 text-sm">
+                          {contadorFinal.toLocaleString('pt-BR')} <span className="text-[10px] text-slate-400 font-sans">pág</span>
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                          {dtAtualContador}
+                        </p>
                       </div>
-                      {tecnicoResp && (
-                        <div>
-                          <span className="text-slate-400">Técnico:</span>{' '}
-                          <span className="text-slate-200">{tecnicoResp}</span>
-                        </div>
-                      )}
+
+                      <div>
+                        <p className="font-bold uppercase text-[10px] text-slate-400 flex items-center gap-1 mb-0.5">
+                          <Gauge size={12}/> Contador Anterior
+                        </p>
+                        <p className="font-mono font-medium text-slate-300 text-sm">
+                          {contadorAnterior !== null ? `${contadorAnterior.toLocaleString('pt-BR')} pág` : 'Primeiro Registro'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+                          {dtAnterior || 'Sem registro anterior'}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="font-bold uppercase text-[10px] text-blue-400 flex items-center gap-1 mb-0.5">
+                          <Printer size={12}/> Rodadas no Período
+                        </p>
+                        <p className="font-mono font-bold text-blue-400 text-sm">
+                          +{paginasRodadas.toLocaleString('pt-BR')} <span className="text-[10px] font-sans">pág</span>
+                        </p>
+                        <p className="text-[10px] text-blue-400 font-bold mt-0.5">
+                          {osItem.dias_decorridos !== null && osItem.dias_decorridos !== undefined
+                            ? `${osItem.dias_decorridos} dia(s) decorrido(s)`
+                            : 'Período N/D'}
+                        </p>
+                      </div>
                     </div>
 
+                    {/* Defeito Relatado */}
                     {defeito && (
-                      <div className="text-xs bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                        <span className="text-amber-400 font-semibold block mb-0.5">Defeito:</span>
-                        <p className="text-slate-300">{defeito}</p>
+                      <div className="text-xs bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-amber-400 font-semibold block mb-0.5">Defeito Relatado:</span>
+                        <p className="text-slate-300 italic">{defeito}</p>
                       </div>
                     )}
 
+                    {/* Relatório Técnico */}
                     {relatorio && (
-                      <div className="text-xs bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                        <span className="text-blue-400 font-semibold block mb-0.5">Relatório Técnico / Serviço:</span>
-                        <p className="text-slate-300">{relatorio}</p>
+                      <div className="text-xs bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                        <span className="text-blue-400 font-semibold block mb-0.5">Relatório Técnico:</span>
+                        <p className="text-slate-300 whitespace-pre-line leading-relaxed">{relatorio}</p>
                       </div>
                     )}
+
+                    {/* Peças Trocadas em Badges */}
+                    {listaPecas.length > 0 && (
+                      <div className="text-xs">
+                        <span className="text-slate-400 font-semibold flex items-center gap-1 mb-1">
+                          <Package size={13} className="text-emerald-400" /> Peças Trocadas:
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {listaPecas.map((p, idxPeca) => (
+                            <span key={idxPeca} className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                              {p}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 );
               })}

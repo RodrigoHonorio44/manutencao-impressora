@@ -1,26 +1,81 @@
-import React from 'react';
-import { X, Printer } from 'lucide-react';
+import React, { useState } from 'react';
+import { 
+  X, 
+  Printer, 
+  Upload, 
+  Trash2, 
+  Image as ImageIcon 
+} from 'lucide-react';
 
 export default function ModalLaudoTecnico({ chamado, onClose }) {
+  const [fotos, setFotos] = useState([]);
+
   if (!chamado) return null;
 
   const handlePrint = () => {
     window.print();
   };
 
-  const formatarData = (data) => {
-    if (!data) return 'N/A';
-
+  // Helper para formatar qualquer tipo de data (incluindo Mongo {$date: "..."})
+  const formatarData = (dataVal) => {
+    if (!dataVal) return 'N/A';
     try {
-      let dataObj = new Date(data);
-
-      if (isNaN(dataObj.getTime())) return 'N/A';
-
-      return dataObj.toLocaleDateString('pt-BR');
+      let dataObj;
+      if (typeof dataVal === 'object' && dataVal.$date) {
+        dataObj = new Date(dataVal.$date);
+      } else if (dataVal instanceof Date) {
+        dataObj = dataVal;
+      } else if (typeof dataVal === 'object' && dataVal.seconds) {
+        dataObj = new Date(dataVal.seconds * 1000);
+      } else {
+        dataObj = new Date(dataVal);
+      }
+      return isNaN(dataObj.getTime()) ? 'N/A' : dataObj.toLocaleDateString('pt-BR');
     } catch {
       return 'N/A';
     }
   };
+
+  // Helper para normalizar e separar a lista de peças em array
+  const obterListaPecas = (pecas) => {
+    if (!pecas) return [];
+    if (Array.isArray(pecas)) {
+      return pecas.flatMap(p => typeof p === 'string' ? p.split(',') : p).map(p => p.trim()).filter(Boolean);
+    }
+    if (typeof pecas === 'string') {
+      return pecas.split(',').map(p => p.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
+  // Upload e manipulação de imagens
+  const handleUploadFoto = (e) => {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFotos(prev => [...prev, reader.result]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemoverFoto = (index) => {
+    setFotos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const osNumero = chamado.os || chamado.numero_os || 'N/A';
+  const dtEntrada = formatarData(chamado.data_entrada);
+  const dtFinalizacao = formatarData(chamado.data_finalizacao || chamado.data_fim || chamado.data_fechamento);
+  const dtAnterior = formatarData(chamado.data_contador_anterior);
+
+  const contadorFinal = Number(chamado.contador_final) || 0;
+  const contadorAnterior = chamado.ultimo_contador_anterior !== null && chamado.ultimo_contador_anterior !== undefined
+    ? Number(chamado.ultimo_contador_anterior) 
+    : null;
+
+  const paginasRodadas = Number(chamado.paginas_rodadas) || 0;
+  const listaPecas = obterListaPecas(chamado.pecas_utilizadas);
 
   return (
     <>
@@ -73,6 +128,18 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
               Laudo Técnico de Atendimento
             </h2>
             <div className="flex gap-2">
+              <label className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer shadow-sm">
+                <Upload size={15} />
+                <span>Anexar Foto</span>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  multiple 
+                  onChange={handleUploadFoto} 
+                  className="hidden" 
+                />
+              </label>
+
               <button
                 type="button"
                 onClick={handlePrint}
@@ -100,12 +167,12 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
                   LAUDO TÉCNICO DE MANUTENÇÃO
                 </h1>
                 <p className="text-xs text-slate-500 font-semibold mt-0.5">
-                  Ordem de Serviço Nº: <span className="text-slate-900 font-bold">{chamado.os || 'N/A'}</span>
+                  Ordem de Serviço Nº: <span className="text-slate-900 font-bold">{osNumero}</span>
                 </p>
               </div>
               <div className="text-right text-xs text-slate-600 font-medium space-y-0.5 shrink-0">
-                <p>Data Entrada: <strong>{formatarData(chamado.data_entrada)}</strong></p>
-                <p>Data Conclusão: <strong>{formatarData(chamado.data_finalizacao || chamado.data_fim || chamado.data_fechamento)}</strong></p>
+                <p>Data Entrada: <strong>{dtEntrada}</strong></p>
+                <p>Data Conclusão: <strong>{dtFinalizacao}</strong></p>
                 <p>Status: <strong className="uppercase text-slate-900">{chamado.status || 'N/A'}</strong></p>
               </div>
             </div>
@@ -135,28 +202,35 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
               </div>
             </div>
 
-            {/* Dados de Leitura de Páginas (Contador) */}
+            {/* Dados de Leitura de Páginas (Contador e Histórico) */}
             <div className="space-y-1">
               <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Métricas e Contadores de Impressão</h3>
               <div className="grid grid-cols-3 gap-3 text-center border border-slate-200 rounded-lg p-3 bg-slate-50">
                 <div>
                   <span className="block text-[10px] font-bold text-slate-400 uppercase">Contador Anterior</span>
-                  <span className="text-xs sm:text-sm font-bold text-slate-700">
-                    {chamado.ultimo_contador_anterior !== null && chamado.ultimo_contador_anterior !== undefined
-                      ? Number(chamado.ultimo_contador_anterior).toLocaleString('pt-BR') + ' págs'
+                  <span className="text-xs sm:text-sm font-bold text-slate-700 block">
+                    {contadorAnterior !== null
+                      ? contadorAnterior.toLocaleString('pt-BR') + ' págs'
                       : 'Primeiro Registro'}
                   </span>
+                  <span className="text-[10px] text-slate-400 font-medium">{dtAnterior !== 'N/A' ? dtAnterior : 'Sem registro anterior'}</span>
                 </div>
                 <div className="border-x border-slate-200">
                   <span className="block text-[10px] font-bold text-slate-400 uppercase">Contador Atual</span>
-                  <span className="text-xs sm:text-sm font-black text-slate-900">
-                    {chamado.contador_final ? Number(chamado.contador_final).toLocaleString('pt-BR') + ' págs' : 'N/A'}
+                  <span className="text-xs sm:text-sm font-black text-slate-900 block">
+                    {contadorFinal ? contadorFinal.toLocaleString('pt-BR') + ' págs' : 'N/A'}
                   </span>
+                  <span className="text-[10px] text-slate-400 font-medium">{dtFinalizacao !== 'N/A' ? dtFinalizacao : dtEntrada}</span>
                 </div>
                 <div>
                   <span className="block text-[10px] font-bold text-slate-400 uppercase">Rodadas no Período</span>
-                  <span className="text-xs sm:text-sm font-bold text-blue-700">
-                    +{chamado.paginas_rodadas ? Number(chamado.paginas_rodadas).toLocaleString('pt-BR') : 0} págs
+                  <span className="text-xs sm:text-sm font-bold text-blue-700 block">
+                    +{paginasRodadas.toLocaleString('pt-BR')} págs
+                  </span>
+                  <span className="text-[10px] text-blue-600 font-bold">
+                    {chamado.dias_decorridos !== null && chamado.dias_decorridos !== undefined
+                      ? `${chamado.dias_decorridos} dia(s) decorrido(s)`
+                      : 'Período N/D'}
                   </span>
                 </div>
               </div>
@@ -174,9 +248,9 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
             <div className="space-y-1">
               <h3 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Peças / Insumos Utilizados</h3>
               <div className="p-3 border border-slate-200 rounded-lg text-xs bg-slate-50">
-                {chamado.pecas_utilizadas && chamado.pecas_utilizadas.length > 0 ? (
+                {listaPecas.length > 0 ? (
                   <ul className="list-disc list-inside space-y-1 font-medium text-slate-700">
-                    {chamado.pecas_utilizadas.map((peca, idx) => (
+                    {listaPecas.map((peca, idx) => (
                       <li key={idx}>{peca}</li>
                     ))}
                   </ul>
@@ -185,6 +259,34 @@ export default function ModalLaudoTecnico({ chamado, onClose }) {
                 )}
               </div>
             </div>
+
+            {/* Galeria de Fotos Anexadas */}
+            {fotos.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-slate-200 block-print-keep">
+                <p className="font-bold uppercase text-[10px] text-slate-500 flex items-center gap-1">
+                  <ImageIcon size={13} /> Anexos e Evidências Fotográficas ({fotos.length})
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {fotos.map((foto, index) => (
+                    <div key={index} className="relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-50">
+                      <img 
+                        src={foto} 
+                        alt={`Evidência ${index + 1}`} 
+                        className="w-full h-32 object-cover" 
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleRemoverFoto(index)}
+                        className="absolute top-1.5 right-1.5 bg-red-600 text-white p-1 rounded-lg opacity-90 hover:opacity-100 transition no-print shadow-md"
+                        title="Remover Imagem"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Campo de Assinatura */}
             <div className="pt-10 grid grid-cols-2 gap-12 text-center text-xs block-print-keep">

@@ -57,6 +57,13 @@ export default function NotasServico() {
       });
 
       setFinalizadas(prontas);
+
+      // Sincroniza as cortesias já marcadas no banco de dados para o estado local
+      const cortesiasSalvas = prontas
+        .filter(item => item.eh_cortesia || item.cortesia)
+        .map(item => getItemId(item));
+      
+      setCortesias(cortesiasSalvas);
     } catch (error) {
       console.error("Erro ao carregar atendimentos:", error);
       toast.error("Erro ao carregar OSs prontas.");
@@ -106,11 +113,32 @@ export default function NotasServico() {
     }
   };
 
-  const toggleCortesia = (id, e) => {
+  // Alterna e persiste o estado de cortesia no backend e no estado local
+  const toggleCortesia = async (id, e) => {
     e.stopPropagation();
+    const ehCortesiaAtual = cortesias.includes(id);
+    const novoStatusCortesia = !ehCortesiaAtual;
+
+    // Atualiza otimisticamente a interface
     setCortesias(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+      ehCortesiaAtual ? prev.filter(i => i !== id) : [...prev, id]
     );
+
+    try {
+      // Salva no banco via API (ajuste a chamada da API conforme a estrutura do seu endpoint)
+      if (api.atualizarAtendimento) {
+        await api.atualizarAtendimento(id, { eh_cortesia: novoStatusCortesia });
+      } else {
+        await api.patch(`/atendimentos/${id}`, { eh_cortesia: novoStatusCortesia });
+      }
+    } catch (error) {
+      console.error("Erro ao salvar cortesia:", error);
+      toast.error("Erro ao salvar cortesia no servidor.");
+      // Reverte em caso de falha
+      setCortesias(prev =>
+        ehCortesiaAtual ? [...prev, id] : prev.filter(i => i !== id)
+      );
+    }
   };
 
   const calcularValorOS = (id) => (cortesias.includes(id) ? 0 : 70);
@@ -605,15 +633,6 @@ export default function NotasServico() {
                   Próxima <ChevronRight size={16} />
                 </button>
               </div>
-            </div>
-          )}
-
-          {!carregando && historico.length === 0 && (
-            <div className="p-12 md:p-20 text-center bg-white rounded-3xl border border-slate-200">
-              <History size={48} className="mx-auto text-slate-200 mb-2" />
-              <p className="text-slate-400 font-medium text-sm">
-                {statusFiltroHistorico === 'gerado' ? 'Nenhuma nota aguardando faturamento no momento.' : 'Nenhuma nota liquidada encontrada no histórico.'}
-              </p>
             </div>
           )}
         </div>

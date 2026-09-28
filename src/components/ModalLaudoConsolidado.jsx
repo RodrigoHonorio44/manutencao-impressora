@@ -15,12 +15,21 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
     return acc;
   }, {});
 
-  // Formata datas para o padrão DD/MM/AAAA
-  const formatarData = (data) => {
-    if (!data) return '-';
+  // Formata datas para o padrão DD/MM/AAAA tratando objetos MongoDB {$date: "..."}
+  const formatarData = (dataVal) => {
+    if (!dataVal) return '-';
     
     try {
-      let dataObj = new Date(data);
+      let dataObj;
+      if (typeof dataVal === 'object' && dataVal.$date) {
+        dataObj = new Date(dataVal.$date);
+      } else if (dataVal instanceof Date) {
+        dataObj = dataVal;
+      } else if (typeof dataVal === 'object' && dataVal.seconds) {
+        dataObj = new Date(dataVal.seconds * 1000);
+      } else {
+        dataObj = new Date(dataVal);
+      }
 
       if (isNaN(dataObj.getTime())) return '-';
 
@@ -28,6 +37,18 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
     } catch {
       return '-';
     }
+  };
+
+  // Helper para normalizar e separar a lista de peças em array
+  const obterListaPecas = (pecas) => {
+    if (!pecas) return [];
+    if (Array.isArray(pecas)) {
+      return pecas.flatMap(p => typeof p === 'string' ? p.split(',') : p).map(p => p.trim()).filter(Boolean);
+    }
+    if (typeof pecas === 'string') {
+      return pecas.split(',').map(p => p.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   return (
@@ -57,11 +78,11 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
             display: none !important;
           }
           @page {
-            size: A4 portrait;
+            size: A4 landscape;
             margin: 8mm;
           }
           table {
-            font-size: 9px !important;
+            font-size: 8.5px !important;
             width: 100% !important;
             border-collapse: collapse !important;
           }
@@ -70,7 +91,7 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
             break-inside: avoid !important;
           }
           th, td {
-            padding: 4px 6px !important;
+            padding: 3px 5px !important;
             border: 1px solid #cbd5e1 !important;
           }
         }
@@ -82,7 +103,7 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
         {/* Container do Modal */}
         <div 
           id="modal-laudo-consolidado"
-          className="bg-white rounded-2xl w-full max-w-6xl my-auto flex flex-col shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh]"
+          className="bg-white rounded-2xl w-full max-w-7xl my-auto flex flex-col shadow-2xl border border-slate-200 overflow-hidden max-h-[92vh]"
         >
           {/* Cabeçalho Fixo */}
           <div className="shrink-0 flex items-center justify-between p-3 sm:p-4 border-b border-slate-200 bg-white z-10 no-print">
@@ -118,7 +139,7 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
             {/* Título de Impressão */}
             <div className="hidden print:block border-b pb-2 mb-2">
               <h1 className="text-sm font-black text-slate-900 uppercase tracking-tight">
-                Laudo Técnico Consolidado - Relatório Geral
+                Laudo Técnico Consolidado - Relatório Geral de Manutenções
               </h1>
               <p className="text-[10px] text-slate-600 mt-0.5">
                 Total de equipamentos listados: <strong>{chamados.length}</strong>
@@ -139,7 +160,7 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
               </div>
             </div>
 
-            {/* Tabela de Dados */}
+            {/* Tabela de Dados Detalhada */}
             {chamados.length === 0 ? (
               <p className="text-center text-slate-500 text-sm py-8">
                 Nenhum chamado selecionado.
@@ -149,29 +170,42 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
                 <table className="w-full text-left border-collapse border border-slate-200 text-xs">
                   <thead>
                     <tr className="bg-slate-100 text-slate-800 border-b border-slate-200 font-semibold text-[11px]">
-                      <th className="p-1.5 border-r border-slate-200 w-24">Nº OS</th>
-                      <th className="p-1.5 border-r border-slate-200 w-24">Conclusão</th>
-                      <th className="p-1.5 border-r border-slate-200 w-32">Nº Serial (S/N)</th>
-                      <th className="p-1.5 border-r border-slate-200 w-44">Equipamento</th>
-                      <th className="p-1.5 border-r border-slate-200 w-36">Cliente</th>
-                      <th className="p-1.5">Serviço / Relatório Técnico</th>
+                      <th className="p-1.5 border-r border-slate-200 w-20">Nº OS</th>
+                      <th className="p-1.5 border-r border-slate-200 w-20">Conclusão</th>
+                      <th className="p-1.5 border-r border-slate-200 w-28">Nº Serial (S/N)</th>
+                      <th className="p-1.5 border-r border-slate-200 w-36">Equipamento</th>
+                      <th className="p-1.5 border-r border-slate-200 w-32">Cliente</th>
+                      <th className="p-1.5 border-r border-slate-200 w-20 text-center">Cont. Anterior</th>
+                      <th className="p-1.5 border-r border-slate-200 w-20 text-center">Cont. Atual</th>
+                      <th className="p-1.5 border-r border-slate-200 w-24 text-center">Rodadas (Período)</th>
+                      <th className="p-1.5 border-r border-slate-200 w-44">Serviço / Relatório Técnico</th>
+                      <th className="p-1.5 w-36">Peças Trocadas</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {chamados.map((item, index) => {
+                      const osNumero = item.os || item.numero_os || 'N/D';
                       const dataFechamento = 
                         item.data_finalizacao ||
                         item.data_fim || 
                         item.data_fechamento || 
-                        item.data_fim_manutencao || 
                         item.data_conclusao || 
-                        item.data_saida ||
-                        item.updatedAt;
+                        item.data_entrada;
+
+                      const dtAnterior = formatarData(item.data_contador_anterior);
+
+                      const contadorFinal = Number(item.contador_final) || 0;
+                      const contadorAnterior = item.ultimo_contador_anterior !== null && item.ultimo_contador_anterior !== undefined
+                        ? Number(item.ultimo_contador_anterior) 
+                        : null;
+
+                      const paginasRodadas = Number(item.paginas_rodadas) || 0;
+                      const listaPecas = obterListaPecas(item.pecas_utilizadas);
 
                       return (
-                        <tr key={item.id || index} className="hover:bg-slate-50/50">
+                        <tr key={item.id || item._id || index} className="hover:bg-slate-50/50">
                           <td className="p-1.5 font-mono text-[10px] font-bold border-r border-slate-200 text-slate-800 whitespace-nowrap">
-                            {item.os || 'N/D'}
+                            {osNumero}
                           </td>
                           <td className="p-1.5 font-mono text-[10px] border-r border-slate-200 text-slate-700 whitespace-nowrap">
                             {formatarData(dataFechamento)}
@@ -185,8 +219,36 @@ export default function ModalLaudoConsolidado({ chamados = [], onClose }) {
                           <td className="p-1.5 border-r border-slate-200 text-[10px] text-slate-600">
                             {item.cliente || '-'}
                           </td>
-                          <td className="p-1.5 text-[10px] text-slate-700 leading-tight">
+                          <td className="p-1.5 border-r border-slate-200 text-[10px] text-slate-700 font-mono text-center">
+                            {contadorAnterior !== null ? contadorAnterior.toLocaleString('pt-BR') : '-'}
+                            {dtAnterior && <span className="block text-[8px] text-slate-400 font-sans">{dtAnterior}</span>}
+                          </td>
+                          <td className="p-1.5 border-r border-slate-200 text-[10px] font-bold text-slate-800 font-mono text-center">
+                            {contadorFinal.toLocaleString('pt-BR')}
+                          </td>
+                          <td className="p-1.5 border-r border-slate-200 text-[10px] font-bold text-blue-700 font-mono text-center">
+                            +{paginasRodadas.toLocaleString('pt-BR')}
+                            {item.dias_decorridos !== null && item.dias_decorridos !== undefined && (
+                              <span className="block text-[8px] text-blue-600 font-sans font-normal">
+                                {item.dias_decorridos} dia(s)
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-1.5 border-r border-slate-200 text-[10px] text-slate-700 leading-tight">
                             {item.relatorio_tecnico || item.defeito || 'Sem registro'}
+                          </td>
+                          <td className="p-1.5 text-[10px]">
+                            {listaPecas.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {listaPecas.map((peca, idxP) => (
+                                  <span key={idxP} className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1 py-0.5 rounded text-[9px] font-semibold">
+                                    {peca}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-[9px]">Nenhuma</span>
+                            )}
                           </td>
                         </tr>
                       );
