@@ -9,6 +9,8 @@ import Historico from './pages/Historico';
 import Manuais from './pages/Manuais'; 
 import Financas from './pages/Financas'; 
 import RelatorioConsumo from './pages/RelatorioConsumo';
+import RelatorioMei from './pages/RelatorioMei';
+import { PaginaDashboard } from './pages/PaginaDashboard'; // Importação do Dashboard Analítico
 import Sidebar from './components/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -38,9 +40,11 @@ function App() {
         <Route path="/manutencao" element={<DashboardLayout><Manutencao /></DashboardLayout>} />
         <Route path="/estoque" element={<DashboardLayout><Estoque /></DashboardLayout>} />
         <Route path="/notas" element={<DashboardLayout><NotasServico /></DashboardLayout>} />
+        <Route path="/mei" element={<DashboardLayout><RelatorioMei /></DashboardLayout>} />
         <Route path="/financas" element={<DashboardLayout><Financas /></DashboardLayout>} />
         <Route path="/relatorios" element={<DashboardLayout><RelatorioConsumo /></DashboardLayout>} />
         <Route path="/historico" element={<DashboardLayout><Historico /></DashboardLayout>} />
+        <Route path="/dashboard-impressoras" element={<DashboardLayout><PaginaDashboard /></DashboardLayout>} /> {/* Nova rota do Dashboard Analítico */}
         <Route path="/manuais" element={<DashboardLayout><Manuais /></DashboardLayout>} />
 
         {/* Redirecionamento de segurança */}

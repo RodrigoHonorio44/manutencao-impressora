@@ -166,5 +166,44 @@ export const api = {
     });
     if (!response.ok) throw new Error('Erro ao faturar a nota');
     return await response.json();
+  },
+
+  // --- CONTROLE MEI (NOTAS FISCAIS E AJUSTES) ---
+  getNotasFiscais: async () => {
+    const response = await fetch(`${API_URL}/notafiscalmei`, {
+      headers: getHeaders()
+    });
+    if (!response.ok) throw new Error('Erro ao buscar dados do MEI');
+    const data = await response.json();
+    return Array.isArray(data) ? data : (data.data || []);
+  },
+
+  criarNotaFiscal: async (payload) => {
+    const response = await fetch(`${API_URL}/notafiscalmei`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error('Erro ao registrar nota');
+    return await response.json();
+  },
+
+  atualizarNotaFiscal: async (id, payload) => {
+    const response = await fetch(`${API_URL}/notafiscalmei/${id}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error('Erro ao atualizar registro');
+    return await response.json();
+  },
+
+  excluirNotaFiscal: async (id) => {
+    const response = await fetch(`${API_URL}/notafiscalmei/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!response.ok) throw new Error('Erro ao excluir registro');
+    return await response.json();
   }
 };

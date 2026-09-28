@@ -68,13 +68,60 @@ export function useHistorico(itensPorPagina = 5) {
   const carregarTodosAtendimentos = async () => {
     setCarregando(true);
     try {
-      const lista = await api.getAtendimentos();
+      const listaBruta = await api.getAtendimentos();
       
-      const listaOrdenada = lista.sort((a, b) => {
-        const dtA = extrairData(a.data_entrada) || 0;
-        const dtB = extrairData(b.data_entrada) || 0;
-        return dtB - dtA;
+      // 1. Normaliza os dados e extrai o contador do texto caso venha vazio nas OS antigas
+      const listaNormalizada = listaBruta.map(os => {
+        let contadorFinal = os.contador_final;
+        if ((!contadorFinal || contadorFinal === 0) && os.relatorio_tecnico) {
+          const match = os.relatorio_tecnico.match(/contador[:\s]*([\d\.]+)/i);
+          if (match) {
+            contadorFinal = Number(match[1].replace(/\./g, ''));
+          }
+        }
+        return {
+          ...os,
+          contador_final: Number(contadorFinal) || 0,
+          dataObj: extrairData(os.data_entrada) || new Date(0)
+        };
       });
+
+      // 2. Ordena cronologicamente do mais ANTIGO para o mais RECENTE para rastrear a sequência do serial
+      const listaCronologica = [...listaNormalizada].sort((a, b) => a.dataObj - b.dataObj);
+
+      const ultimosContadoresPorSerial = {};
+      const listaComCalculo = listaCronologica.map(os => {
+        const serial = os.serial ? String(os.serial).trim().toLowerCase() : 'desconhecido';
+        const contadorAtual = os.contador_final;
+        
+        let contadorAnterior = os.ultimo_contador_anterior;
+        let rodadasPeriodo = os.paginas_rodadas;
+
+        // Se a OS não tiver o cálculo salvo, calcula dinamicamente com base na anterior do mesmo serial
+        if (contadorAnterior === undefined || contadorAnterior === null) {
+          if (ultimosContadoresPorSerial[serial] !== undefined) {
+            contadorAnterior = ultimosContadoresPorSerial[serial];
+            rodadasPeriodo = contadorAtual >= contadorAnterior ? contadorAtual - contadorAnterior : 0;
+          } else {
+            contadorAnterior = 'Primeiro Registro';
+            rodadasPeriodo = 0;
+          }
+        }
+
+        if (contadorAtual > 0) {
+          ultimosContadoresPorSerial[serial] = contadorAtual;
+        }
+
+        return {
+          ...os,
+          contador_final: contadorAtual,
+          ultimo_contador_anterior: contadorAnterior,
+          paginas_rodadas: rodadasPeriodo
+        };
+      });
+
+      // 3. Reverte para o padrão de exibição (do mais RECENTE para o mais ANTIGO)
+      const listaOrdenada = listaComCalculo.sort((a, b) => b.dataObj - a.dataObj);
 
       setTodosAtendimentos(listaOrdenada);
       setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(listaOrdenada));
@@ -176,7 +223,6 @@ export function useHistorico(itensPorPagina = 5) {
     setEditandoId(targetId);
     setCardAbertoId(targetId);
     
-    // Tratamento para garantir que pecas_utilizadas venha como string formatada para o input
     let pecasStr = '';
     if (Array.isArray(os.pecas_utilizadas)) {
       pecasStr = os.pecas_utilizadas.join(', ');
@@ -193,7 +239,6 @@ export function useHistorico(itensPorPagina = 5) {
     });
   };
 
-  // Função auxiliar para atualizar campos individualmente de forma limpa
   const handleMudancaCampoEdicao = (campo, valor) => {
     setDadosEdicao(prev => ({
       ...prev,
@@ -225,33 +270,8 @@ export function useHistorico(itensPorPagina = 5) {
 
       await api.atualizarAtendimento(id, payloadAtualizacao);
 
-      const listaAtualizada = todosAtendimentos.map(item => {
-        const itemId = item.id || item._id;
-        if (itemId === id) {
-          return {
-            ...item,
-            ...payloadAtualizacao,
-            data_finalizacao: dadosEdicao.status === 'Finalizado' ? (item.data_finalizacao || new Date()) : item.data_finalizacao
-          };
-        }
-        return item;
-      });
-
-      setTodosAtendimentos(listaAtualizada);
-      
-      if (busca) {
-        const termo = busca.trim().toLowerCase();
-        setAtendimentosFiltrados(listaAtualizada.filter(os => {
-          return (os.serial && String(os.serial).toLowerCase().includes(termo)) ||
-                 (os.modelo && String(os.modelo).toLowerCase().includes(termo)) ||
-                 (os.os && String(os.os).toLowerCase().includes(termo)) ||
-                 (os.cliente && String(os.cliente).toLowerCase().includes(termo));
-        }));
-      } else if (diaSelecionado) {
-        setAtendimentosFiltrados(listaAtualizada.filter(os => mesmoDia(extrairData(os.data_entrada), diaSelecionado)));
-      } else {
-        setAtendimentosFiltrados(aplicarFiltroPadraoOuMes(listaAtualizada));
-      }
+      // Recarrega todos os atendimentos para recalcular automaticamente as páginas rodadas de todo o histórico da máquina
+      await carregarTodosAtendimentos();
 
       toast.success("Card atualizado com sucesso!");
       setEditandoId(null);
@@ -306,7 +326,7 @@ export function useHistorico(itensPorPagina = 5) {
     salvando,
     dadosEdicao,
     setDadosEdicao,
-    handleMudancaCampoEdicao, // <-- Nova função auxiliar exportada
+    handleMudancaCampoEdicao,
     paginaAtual,
     setPaginaAtual,
     totalPaginas,

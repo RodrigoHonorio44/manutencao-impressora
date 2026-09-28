@@ -10,6 +10,7 @@ import {
   BookOpen, 
   CircleDollarSign, 
   BarChart3, 
+  Receipt,
   Menu, 
   X 
 } from 'lucide-react';
@@ -27,9 +28,11 @@ export default function Sidebar() {
 
   const menuItems = [
     { icon: <LayoutDashboard size={20} />, label: 'Dashboard', path: '/home' },
+    { icon: <BarChart3 size={20} />, label: 'Analítico de Impressoras', path: '/dashboard-impressoras' },
     { icon: <Printer size={20} />, label: 'Manutenção', path: '/manutencao' },
     { icon: <Package size={20} />, label: 'Estoque Peças', path: '/estoque' },
     { icon: <FileText size={20} />, label: 'Notas de Serviço', path: '/notas' },
+    { icon: <Receipt size={20} />, label: 'Controle MEI', path: '/mei' },
     { icon: <CircleDollarSign size={20} />, label: 'Finanças', path: '/financas' },
     { icon: <BarChart3 size={20} />, label: 'Relatório Gastos', path: '/relatorios' },
     { icon: <History size={20} />, label: 'Histórico', path: '/historico' },
