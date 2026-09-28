@@ -1,9 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useHistorico } from '../hooks/useHistorico';
-import { Printer, AlertTriangle, TrendingDown, Wrench, BarChart3, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Printer, AlertTriangle, TrendingDown, Wrench, BarChart3, ArrowLeft, RefreshCw, X, Calendar, FileText, User } from 'lucide-react';
 
 export function PaginaDashboard({ onVoltar }) {
   const { todosAtendimentos, carregando } = useHistorico();
+  const [equipamentoSelecionado, setEquipamentoSelecionado] = useState(null);
+
+  // Função auxiliar para extrair a data corretamente (seja string ou objeto MongoDB { $date })
+  const extrairData = (item) => {
+    const rawDate = item.data_entrada || item.data_finalizacao || item.data || item.created_at;
+    if (!rawDate) return null;
+    if (typeof rawDate === 'object' && rawDate.$date) {
+      return rawDate.$date;
+    }
+    return rawDate;
+  };
 
   // Processa as estatísticas avançadas com base em todos os atendimentos
   const estatisticas = React.useMemo(() => {
@@ -26,14 +37,25 @@ export function PaginaDashboard({ onVoltar }) {
           cliente: cliente,
           totalQuebras: 0,
           totalPaginasRodadas: 0,
+          historicoAtendimentos: []
         };
       }
 
       mapEquipamentos[chave].totalQuebras += 1;
       mapEquipamentos[chave].totalPaginasRodadas += paginas;
+      mapEquipamentos[chave].historicoAtendimentos.push(os);
     });
 
     const listaEquipamentos = Object.values(mapEquipamentos);
+
+    // Ordena os históricos de cada equipamento por data (mais recente primeiro)
+    listaEquipamentos.forEach(eq => {
+      eq.historicoAtendimentos.sort((a, b) => {
+        const dataA = new Date(extrairData(a) || 0);
+        const dataB = new Date(extrairData(b) || 0);
+        return dataB - dataA;
+      });
+    });
 
     // 1. Impressoras que MAIS quebram
     const maisQuebram = [...listaEquipamentos].sort((a, b) => b.totalQuebras - a.totalQuebras);
@@ -44,8 +66,8 @@ export function PaginaDashboard({ onVoltar }) {
       .sort((a, b) => a.totalPaginasRodadas - b.totalPaginasRodadas);
 
     return {
-      maisQuebram: maisQuebram.slice(0, 10), // Top 10
-      menosRodam: menosRodam.slice(0, 10),   // Top 10 que menos rodam
+      maisQuebram: maisQuebram.slice(0, 10),
+      menosRodam: menosRodam.slice(0, 10),
       totalMaquinasUnicas: listaEquipamentos.length,
       totalGeralPaginas,
       totalGeralQuebras
@@ -81,7 +103,7 @@ export function PaginaDashboard({ onVoltar }) {
               <BarChart3 className="text-blue-400" /> Dashboard Analítico de Impressoras
             </h1>
             <p className="text-sm text-slate-400">
-              Visão geral da frota: identificação de equipamentos problemáticos e volume de produção.
+              Visão geral da frota: clique em qualquer equipamento para ver o histórico completo de manutenções.
             </p>
           </div>
         </div>
@@ -111,10 +133,10 @@ export function PaginaDashboard({ onVoltar }) {
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2 text-amber-400 font-semibold">
               <AlertTriangle size={20} />
-              <h2>Impressoras que Mais Quebram (Manutenções)</h2>
+              <h2>Impressoras que Mais Quebram</h2>
             </div>
             <span className="text-xs bg-amber-500/10 text-amber-400 px-2.5 py-1 rounded-full border border-amber-500/20 font-medium">
-              Top Frequência
+              Clique no item para detalhes
             </span>
           </div>
 
@@ -123,7 +145,11 @@ export function PaginaDashboard({ onVoltar }) {
               <p className="text-sm text-slate-500 text-center py-6">Nenhum registro encontrado.</p>
             ) : (
               estatisticas.maisQuebram.map((item, index) => (
-                <div key={item.identificador} className="flex items-center justify-between bg-slate-800/60 hover:bg-slate-800 p-3.5 rounded-xl border border-slate-700/50 transition">
+                <div 
+                  key={item.identificador} 
+                  onClick={() => setEquipamentoSelecionado(item)}
+                  className="flex items-center justify-between bg-slate-800/60 hover:bg-slate-800 p-3.5 rounded-xl border border-slate-700/50 cursor-pointer transition transform hover:scale-[1.01]"
+                >
                   <div className="flex items-center gap-3.5">
                     <span className={`w-7 h-7 flex items-center justify-center rounded-lg font-bold text-xs ${
                       index === 0 ? 'bg-amber-500 text-slate-950' : 
@@ -158,7 +184,7 @@ export function PaginaDashboard({ onVoltar }) {
               <h2>Impressoras que Menos Rodam Páginas</h2>
             </div>
             <span className="text-xs bg-rose-500/10 text-rose-400 px-2.5 py-1 rounded-full border border-rose-500/20 font-medium">
-              Baixo Volume
+              Clique no item para detalhes
             </span>
           </div>
 
@@ -167,7 +193,11 @@ export function PaginaDashboard({ onVoltar }) {
               <p className="text-sm text-slate-500 text-center py-6">Nenhum registro encontrado com páginas contabilizadas.</p>
             ) : (
               estatisticas.menosRodam.map((item, index) => (
-                <div key={item.identificador} className="flex items-center justify-between bg-slate-800/60 hover:bg-slate-800 p-3.5 rounded-xl border border-slate-700/50 transition">
+                <div 
+                  key={item.identificador} 
+                  onClick={() => setEquipamentoSelecionado(item)}
+                  className="flex items-center justify-between bg-slate-800/60 hover:bg-slate-800 p-3.5 rounded-xl border border-slate-700/50 cursor-pointer transition transform hover:scale-[1.01]"
+                >
                   <div className="flex items-center gap-3.5">
                     <span className={`w-7 h-7 flex items-center justify-center rounded-lg font-bold text-xs ${
                       index === 0 ? 'bg-rose-500 text-white' : 
@@ -194,6 +224,107 @@ export function PaginaDashboard({ onVoltar }) {
         </div>
 
       </div>
+
+      {/* MODAL DE HISTÓRICO DO EQUIPAMENTO */}
+      {equipamentoSelecionado && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Cabeçalho do Modal */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+              <div>
+                <span className="text-xs uppercase tracking-wider text-blue-400 font-semibold">Histórico de Atendimentos</span>
+                <h3 className="text-lg font-bold text-white">{equipamentoSelecionado.modelo}</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  Serial/ID: {equipamentoSelecionado.identificador} | Cliente: {equipamentoSelecionado.cliente}
+                </p>
+              </div>
+              <button 
+                onClick={() => setEquipamentoSelecionado(null)}
+                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Resumo Rápido no Modal */}
+            <div className="grid grid-cols-2 gap-3 p-4 bg-slate-950/40 border-b border-slate-800/60 text-center">
+              <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-xs text-slate-400 block">Total de Chamados</span>
+                <span className="text-base font-bold text-amber-400">{equipamentoSelecionado.totalQuebras}</span>
+              </div>
+              <div className="bg-slate-800/40 p-2.5 rounded-xl border border-slate-800">
+                <span className="text-xs text-slate-400 block">Páginas Acumuladas</span>
+                <span className="text-base font-bold text-emerald-400">{equipamentoSelecionado.totalPaginasRodadas.toLocaleString('pt-BR')}</span>
+              </div>
+            </div>
+
+            {/* Lista de Atendimentos */}
+            <div className="p-5 overflow-y-auto space-y-3 flex-1">
+              {equipamentoSelecionado.historicoAtendimentos.map((osItem, idx) => {
+                const dataFormatada = extrairData(osItem);
+                const numeroOS = osItem.os || osItem.numero_os || osItem.id || 'N/A';
+                const defeito = osItem.defeito || osItem.defeito_relatado;
+                const relatorio = osItem.relatorio_tecnico || osItem.servico_executado;
+                const tecnicoResp = osItem.tecnico || osItem.usuario;
+
+                return (
+                  <div key={osItem._id || osItem.id || idx} className="bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 p-4 rounded-xl space-y-2 transition">
+                    <div className="flex items-center justify-between text-xs text-slate-400 border-b border-slate-700/40 pb-2">
+                      <span className="flex items-center gap-1.5 font-medium text-slate-300">
+                        <Calendar size={14} className="text-blue-400" />
+                        {dataFormatada ? new Date(dataFormatada).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'Data não informada'}
+                      </span>
+                      <span className="bg-slate-700/60 px-2 py-0.5 rounded text-slate-200 font-mono">
+                        OS: {numeroOS}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                      <div>
+                        <span className="text-slate-400">Páginas Rodadas:</span>{' '}
+                        <strong className="text-emerald-400 font-semibold">{Number(osItem.paginas_rodadas || 0).toLocaleString('pt-BR')} págs</strong>
+                      </div>
+                      {tecnicoResp && (
+                        <div>
+                          <span className="text-slate-400">Técnico:</span>{' '}
+                          <span className="text-slate-200">{tecnicoResp}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {defeito && (
+                      <div className="text-xs bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                        <span className="text-amber-400 font-semibold block mb-0.5">Defeito:</span>
+                        <p className="text-slate-300">{defeito}</p>
+                      </div>
+                    )}
+
+                    {relatorio && (
+                      <div className="text-xs bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                        <span className="text-blue-400 font-semibold block mb-0.5">Relatório Técnico / Serviço:</span>
+                        <p className="text-slate-300">{relatorio}</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Rodapé do Modal */}
+            <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-end">
+              <button 
+                onClick={() => setEquipamentoSelecionado(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-sm rounded-xl transition"
+              >
+                Fechar
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
