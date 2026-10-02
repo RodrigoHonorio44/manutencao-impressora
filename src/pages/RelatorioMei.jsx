@@ -179,12 +179,18 @@ export default function RelatorioMei() {
   ];
 
   const faturamentoPorMes = mesesDoAno.map((m) => {
-    const chaveCompetencia1 = `${anoDeclaracao}-${m.mes}`;
-    const chaveCompetencia2 = `${m.mes}/${anoDeclaracao}`;
-    
-    const notasDoMes = notasDoAno.filter(
-      n => n.competencia === chaveCompetencia1 || n.competencia === chaveCompetencia2 || n.competencia.endsWith(`-${m.mes}`)
-    );
+    const notasDoMes = notasDoAno.filter(n => {
+      if (!n.competencia) return false;
+      const compLimpa = n.competencia.trim().replace(/\//g, '-');
+      
+      const formatoAnoMes = `${anoDeclaracao}-${m.mes}`;
+      const formatoMesAno = `${m.mes}-${anoDeclaracao}`;
+      
+      return compLimpa === formatoAnoMes || 
+             compLimpa === formatoMesAno || 
+             compLimpa.endsWith(`-${m.mes}`) ||
+             compLimpa === m.mes;
+    });
     
     const totalMes = notasDoMes.reduce((acc, n) => acc + (Number(n.valor) || 0), 0);
     return {
