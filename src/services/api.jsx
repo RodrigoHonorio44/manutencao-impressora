@@ -155,9 +155,11 @@ export const api = {
   },
 
   faturarNota: async (id) => {
-    const response = await fetch(`${API_URL}/historico_notas/${id}/faturar`, {
-      method: 'PATCH',
-      headers: getHeaders()
+    // Utiliza PUT atualizando o status para 'faturado' para evitar erro 404 em rotas específicas do servidor
+    const response = await fetch(`${API_URL}/historico_notas/${id}`, {
+      method: 'PUT',
+      headers: getHeaders(),
+      body: JSON.stringify({ status: 'faturado' })
     });
     if (!response.ok) throw new Error('Erro ao faturar a nota');
     return await response.json();

@@ -36,15 +36,44 @@ export default function NotasServico() {
     return isNaN(dataObj.getTime()) ? '---' : dataObj.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  // 1. Carrega OSs finalizadas consumindo api.getAtendimentos() com ordenação CRESCENTE (Antiga -> Recente)
+  // 1. Carrega OSs finalizadas e remove as que já possuem nota gerada
   const carregarAtendimentosFinalizados = async () => {
     try {
-      const data = await api.getAtendimentos();
+      // Busca atendimentos e histórico de notas em paralelo para cruzar os dados
+      const [dataAtendimentos, dataNotasGeradas, dataNotasFaturadas] = await Promise.all([
+        api.getAtendimentos(),
+        api.getHistorico_notas ? api.getHistorico_notas('gerado', 1, 1000).catch(() => ({ docs: [] })) : api.getHistoricoNotas('gerado', 1, 1000).catch(() => ({ docs: [] })),
+        api.getHistoricoNotas ? api.getHistoricoNotas('faturado', 1, 1000).catch(() => ({ docs: [] })) : { docs: [] }
+      ]);
       
-      // Filtra apenas as que estão com status Finalizado
-      const prontas = data.filter(item => (item.status || '').toLowerCase() === 'finalizado');
+      // Coleta todos os IDs de atendimentos que já foram adicionados a alguma nota (gerada ou faturada)
+      const todasNotas = [
+        ...(dataNotasGeradas.docs || dataNotasGeradas.itens || (Array.isArray(dataNotasGeradas) ? dataNotasGeradas : [])),
+        ...(dataNotasFaturadas.docs || dataNotasFaturadas.itens || (Array.isArray(dataNotasFaturadas) ? dataNotasFaturadas : []))
+      ];
 
-      // Ordena por data crescente (mais antiga primeiro / 01/09 até 30/09)
+      const idsAtendimentosComNota = new Set();
+      todasNotas.forEach(nota => {
+        if (nota.atendimento_ids && Array.isArray(nota.atendimento_ids)) {
+          nota.atendimento_ids.forEach(id => idsAtendimentosComNota.add(String(id)));
+        }
+        if (nota.servicos && Array.isArray(nota.servicos)) {
+          nota.servicos.forEach(s => {
+            if (s.atendimento_id) idsAtendimentosComNota.add(String(s.atendimento_id));
+            if (s._id) idsAtendimentosComNota.add(String(s._id));
+          });
+        }
+      });
+
+      // Filtra apenas as finalizadas que AINDA NÃO possuem nota gerada
+      const prontas = dataAtendimentos.filter(item => {
+        const id = String(getItemId(item));
+        const statusOk = (item.status || '').toLowerCase() === 'finalizado';
+        const semNota = !idsAtendimentosComNota.has(id);
+        return statusOk && semNota;
+      });
+
+      // Ordena por data crescente (mais antiga primeiro)
       prontas.sort((a, b) => {
         const getMillis = (d) => {
           if (!d) return 0;
@@ -125,7 +154,6 @@ export default function NotasServico() {
     );
 
     try {
-      // Salva no banco via API (ajuste a chamada da API conforme a estrutura do seu endpoint)
       if (api.atualizarAtendimento) {
         await api.atualizarAtendimento(id, { eh_cortesia: novoStatusCortesia });
       } else {
@@ -600,40 +628,16 @@ export default function NotasServico() {
                       
                       <button 
                         onClick={() => ejecutarImpressaoHTML(nota.servicos, nota.valor_total, nota.data_extenso, nota.status)}
-                        className="flex items-center gap-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-600 text-[11px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 transition-all uppercase tracking-wide"
+                        className="flex items-center gap-1 bg-slate-100 hover:bg-blue-600 text-slate-700 hover:text-white text-[11px] font-bold px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-600 transition-all uppercase tracking-wide"
+                        title="Imprimir Nota"
                       >
-                        <Printer size={13} /> Imprimir Via
+                        <Printer size={13} /> Imprimir
                       </button>
                     </div>
                   </div>
                 </div>
               );
             })
-          )}
-
-          {/* BARRA DE PAGINAÇÃO DO HISTÓRICO */}
-          {historico.length > 0 && (
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mt-4">
-              <span className="text-xs font-bold text-slate-500">
-                Página <span className="text-slate-800 font-black">{paginaAtual}</span> de {totalPaginas}
-              </span>
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                <button
-                  onClick={() => carregarHistorico(paginaAtual - 1)}
-                  disabled={paginaAtual === 1}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual === 1 ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
-                >
-                  <ChevronLeft size={16} /> Anterior
-                </button>
-                <button
-                  onClick={() => carregarHistorico(paginaAtual + 1)}
-                  disabled={paginaAtual >= totalPaginas}
-                  className={`flex-1 sm:flex-none flex items-center justify-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${paginaAtual >= totalPaginas ? 'border-slate-100 text-slate-300 cursor-not-allowed bg-slate-50' : 'border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95'}`}
-                >
-                  Próxima <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
           )}
         </div>
       )}
