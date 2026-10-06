@@ -1,16 +1,30 @@
 import { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCircle, X, Camera, Loader2 } from 'lucide-react';
+import { Printer, ClipboardList, CheckCircle2, Settings, Hash, History, AlertCircle, X, Camera, Loader2, Building2, MapPin, Layers, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ModalGerenciarOS from '../components/ModalGerenciarOS';
 import { createWorker } from 'tesseract.js';
 
-// LISTA DE CLIENTES/UNIDADES PADRONIZADOS
-const CLIENTES_DISPONIVEIS = [
-  { id: "conde modesto leal", nomeExibicao: "Conde Modesto Leal" },
-  { id: "upa inoa", nomeExibicao: "Upa Inoã" },
-  { id: "upa santa rita", nomeExibicao: "Upa Santa Rita" },
-  { id: "secretaria de saude", nomeExibicao: "Secretaria de Saúde" }
+// ESTRUTURA DE CLIENTES E UNIDADES/POSTOS
+const ESTRUTURA_CLIENTES = [
+  {
+    id: "malta solucoes",
+    nomeExibicao: "Malta Soluções (Contrato)",
+    unidades: [
+      { id: "matriz / geral", nomeExibicao: "Matriz / Sede Geral" },
+      { id: "conde modesto leal", nomeExibicao: "Hospital Conde Modesto Leal" },
+      { id: "upa inoa", nomeExibicao: "UPA Inoã" },
+      { id: "upa santa rita", nomeExibicao: "UPA Santa Rita" },
+      { id: "secretaria de saude", nomeExibicao: "Secretaria de Saúde" }
+    ]
+  },
+  {
+    id: "cliente particular",
+    nomeExibicao: "Cliente Particular / Avulso",
+    unidades: [
+      { id: "balcao", nomeExibicao: "Atendimento Balcão / Oficina" }
+    ]
+  }
 ];
 
 const MODELOS_DISPONIVEIS = {
@@ -18,6 +32,7 @@ const MODELOS_DISPONIVEIS = {
   "Epson": ["Ecotank L5590", "Ecotank L4260"],
   "HP Laser":["408dn","MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
+  "HP (Jato de Tinta / Ink Tank)": ["Smart Tank 584", "Outro Modelo HP Ink Tank"],
   "Pantum": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Pantum"],
   "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
   "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"]
@@ -25,9 +40,9 @@ const MODELOS_DISPONIVEIS = {
 
 export default function Manutencao() {
   const [chamados, setChamados] = useState([]);
-  const [form, setForm] = useState({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
+  const [form, setForm] = useState({ cliente: '', unidade: '', setor: '', nome_cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
   
-  // Estados para controle de digitação manual de marca e modelo
+  // Estados para controle de digitação manual
   const [marcaManual, setMarcaManual] = useState('');
   const [isMarcaManual, setIsMarcaManual] = useState(false);
   const [modeloManual, setModeloManual] = useState('');
@@ -36,24 +51,25 @@ export default function Manutencao() {
   const [modalAberto, setModalAberto] = useState(false);
   const [chamadoSelecionado, setChamadoSelecionado] = useState(null);
 
-  // Estados para o histórico do Serial
+  // Histórico
   const [historicoEquipamento, setHistoricoEquipamento] = useState([]);
   const [modalHistoricoAberto, setModalHistoricoAberto] = useState(false);
 
-  // Estado de carregamento do OCR
+  // OCR
   const [lendoFoto, setLendoFoto] = useState(false);
+
+  // Obtém as unidades disponíveis com base no cliente selecionado
+  const unidadesDisponiveis = ESTRUTURA_CLIENTES.find(c => c.id === form.cliente)?.unidades || [];
 
   const carregarChamados = async () => {
     try {
       const dados = await api.getAtendimentos();
       
-      // Filtra os chamados ativos (excluindo Finalizado e Faturado)
       const filtrados = dados.filter(item => {
         const statusItem = (item.status || '').toLowerCase();
         return statusItem !== 'finalizado' && statusItem !== 'faturado';
       });
 
-      // Ordena por data decrescente
       filtrados.sort((a, b) => {
         const dataA = new Date(a.data_entrada || a.criadoEm || 0).getTime();
         const dataB = new Date(b.data_entrada || b.criadoEm || 0).getTime();
@@ -71,7 +87,6 @@ export default function Manutencao() {
     carregarChamados();
   }, []);
 
-  // Efeito para buscar histórico quando o Serial for digitado
   useEffect(() => {
     const buscarHistorico = async () => {
       if (!form.serial.trim()) {
@@ -104,7 +119,6 @@ export default function Manutencao() {
     return () => clearTimeout(delayBusca);
   }, [form.serial]);
 
-  // Leitura da foto via Tesseract (OCR)
   const handleCapturaFoto = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -122,7 +136,6 @@ export default function Manutencao() {
       let marcaDetectada = '';
       let modeloDetectado = '';
 
-      // 1. Extração do Serial
       const serialMatch = textoLido.match(/(?:s\/n|sn|serial|s\/n:)?\s*:?\s*([a-z0-9]{8,15})/i);
       if (serialMatch && serialMatch[1]) {
         novoSerial = serialMatch[1].toLowerCase();
@@ -134,7 +147,6 @@ export default function Manutencao() {
         }
       }
 
-      // 2. Extração de Marca e Modelo
       for (const [marca, modelos] of Object.entries(MODELOS_DISPONIVEIS)) {
         const marcaLimpa = marca.toLowerCase();
         if (textoLido.includes(marcaLimpa) || (marcaLimpa.includes('hp') && textoLido.includes('hp'))) {
@@ -181,7 +193,14 @@ export default function Manutencao() {
   const handleEntrada = async (e) => {
     e.preventDefault();
     if (!form.cliente) {
-      return toast.error("Selecione um Cliente / Unidade!");
+      return toast.error("Selecione a Empresa / Cliente!");
+    }
+    if (!form.unidade) {
+      return toast.error("Selecione a Unidade / Local!");
+    }
+
+    if (form.cliente === 'cliente particular' && !form.nome_cliente.trim()) {
+      return toast.error("Informe o Nome do Cliente ou Empresa!");
     }
 
     const marcaFinal = isMarcaManual ? marcaManual.trim() : form.marca;
@@ -194,8 +213,13 @@ export default function Manutencao() {
     const loading = toast.loading("Registrando entrada no MongoDB...");
     const numeroOS = gerarNumeroOS();
 
+    // Se for Malta Soluções, o campo cliente no banco recebe a unidade (ex: "conde modesto leal")
+    const clienteValor = form.cliente === 'malta solucoes' ? form.unidade.toLowerCase() : form.cliente.toLowerCase();
+
     const novoAtendimento = {
-      cliente: form.cliente.toLowerCase(),
+      cliente: clienteValor,
+      ...(form.cliente === 'malta solucoes' && form.setor ? { setor: form.setor.trim().toLowerCase() } : {}),
+      ...(form.cliente === 'cliente particular' && form.nome_cliente ? { nome_cliente: form.nome_cliente.trim().toLowerCase() } : {}),
       marca: marcaFinal.toLowerCase(),
       modelo: modeloFinal.toLowerCase(),
       serial: form.serial.trim().toLowerCase(),
@@ -207,7 +231,6 @@ export default function Manutencao() {
     };
 
     try {
-      // Envia diretamente para a rota de atendimentos da API
       const token = localStorage.getItem('token');
       const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://192.168.0.194:3000/api'}/atendimentos`, {
         method: 'POST',
@@ -223,7 +246,7 @@ export default function Manutencao() {
         throw new Error(errData.message || 'Erro ao registrar atendimento no servidor.');
       }
 
-      setForm({ cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
+      setForm({ cliente: '', unidade: '', setor: '', nome_cliente: '', marca: '', modelo: '', serial: '', defeito: '' });
       setMarcaManual('');
       setModeloManual('');
       setIsMarcaManual(false);
@@ -283,17 +306,65 @@ export default function Manutencao() {
         </div>
         
         <form onSubmit={handleEntrada} className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-          <select
-            value={form.cliente}
-            onChange={(e) => setForm({...form, cliente: e.target.value})}
-            className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
-          >
-            <option value="">Selecione o Cliente / Unidade...</option>
-            {CLIENTES_DISPONIVEIS.map((cli) => (
-              <option key={cli.id} value={cli.id}>{cli.nomeExibicao}</option>
-            ))}
-          </select>
           
+          {/* SELECT 1: CLIENTE / EMPRESA */}
+          <div className="w-full">
+            <select
+              value={form.cliente}
+              onChange={(e) => setForm({...form, cliente: e.target.value, unidade: '', setor: '', nome_cliente: ''})}
+              className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full"
+            >
+              <option value="">Selecione a Empresa / Cliente...</option>
+              {ESTRUTURA_CLIENTES.map((cli) => (
+                <option key={cli.id} value={cli.id}>{cli.nomeExibicao}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* SELECT 2: UNIDADE / LOCAL (DINÂMICO) */}
+          <div className="w-full">
+            <select
+              value={form.unidade}
+              disabled={!form.cliente}
+              onChange={(e) => setForm({...form, unidade: e.target.value})}
+              className="p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm disabled:cursor-not-allowed disabled:text-slate-400 w-full"
+            >
+              <option value="">
+                {form.cliente ? "Selecione a Unidade / Local..." : "Escolha o cliente primeiro..."}
+              </option>
+              {unidadesDisponiveis.map((u) => (
+                <option key={u.id} value={u.id}>{u.nomeExibicao}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* INPUT DINÂMICO DE SETOR (MALTA SOLUÇÕES) */}
+          {form.cliente === 'malta solucoes' && (
+            <div className="w-full">
+              <input 
+                type="text"
+                placeholder="Setor (ex: Maternidade, Recepção, UTI)" 
+                className="p-3 bg-slate-50 border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full placeholder:text-slate-400"
+                value={form.setor} 
+                onChange={(e) => setForm({...form, setor: e.target.value.toLowerCase()})} 
+              />
+            </div>
+          )}
+
+          {/* INPUT DINÂMICO DE NOME CLIENTE/EMPRESA (CLIENTE PARTICULAR) */}
+          {form.cliente === 'cliente particular' && (
+            <div className="w-full">
+              <input 
+                type="text"
+                placeholder="Nome do Cliente / Nome da Empresa" 
+                className="p-3 bg-slate-50 border border-blue-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 font-medium text-sm w-full placeholder:text-slate-400"
+                value={form.nome_cliente} 
+                onChange={(e) => setForm({...form, nome_cliente: e.target.value.toLowerCase()})} 
+              />
+            </div>
+          )}
+
+          {/* MARCA */}
           <div className="flex flex-col gap-2 w-full">
             <select
               value={isMarcaManual ? "MANUAL" : form.marca}
@@ -328,6 +399,7 @@ export default function Manutencao() {
             )}
           </div>
 
+          {/* MODELO */}
           <div className="flex flex-col gap-2 w-full">
             {!isMarcaManual ? (
               <select
@@ -365,6 +437,7 @@ export default function Manutencao() {
             )}
           </div>
 
+          {/* SERIAL */}
           <div className="flex flex-col space-y-1 w-full">
             <input 
               placeholder="S/N (Número de Série)" 
@@ -389,6 +462,7 @@ export default function Manutencao() {
             )}
           </div>
           
+          {/* DEFEITO E BOTÃO */}
           <div className="md:col-span-2 flex flex-col md:flex-row gap-3 items-stretch md:items-start w-full">
             <input 
               placeholder="Defeito Relatado" 
@@ -431,7 +505,20 @@ export default function Manutencao() {
                   </div>
 
                   <div className="space-y-0.5">
-                    <p className="text-sm text-slate-800 font-bold capitalize">Cliente: {item.cliente}</p>
+                    <p className="text-sm text-slate-800 font-bold capitalize flex items-center gap-1.5">
+                      <Building2 size={14} className="text-slate-400" />
+                      Cliente: {item.cliente}
+                      {item.nome_cliente && (
+                        <span className="text-xs font-semibold text-emerald-700 flex items-center gap-0.5 ml-2 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-md">
+                          <User size={12} className="text-emerald-600" /> Nome: {item.nome_cliente}
+                        </span>
+                      )}
+                      {item.setor && (
+                        <span className="text-xs font-semibold text-blue-700 flex items-center gap-0.5 ml-2 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                          <Layers size={12} className="text-blue-500" /> Setor: {item.setor}
+                        </span>
+                      )}
+                    </p>
                     <p className="text-[11px] font-mono text-slate-500 font-bold uppercase">S/N: {item.serial}</p>
                   </div>
                   
@@ -477,7 +564,7 @@ export default function Manutencao() {
         </div>
       </div>
 
-      {/* MODAL DO HISTÓRICO DE MANUTENÇÃO ANTERIOR */}
+      {/* MODAL DO HISTÓRICO */}
       {modalHistoricoAberto && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100">
@@ -521,7 +608,11 @@ export default function Manutencao() {
                       </span>
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-700 uppercase">Cliente na época: <span className="text-slate-900 font-medium capitalize">{hist.cliente}</span></h4>
+                      <h4 className="text-xs font-bold text-slate-700 uppercase">
+                        Cliente na época: <span className="text-slate-900 font-medium capitalize">{hist.cliente}</span>
+                        {hist.nome_cliente && <span className="text-emerald-700 font-medium capitalize"> (Nome: {hist.nome_cliente})</span>}
+                        {hist.setor && <span className="text-blue-600 font-medium capitalize"> (Setor: {hist.setor})</span>}
+                      </h4>
                       <p className="text-xs font-bold text-slate-700 mt-1 uppercase">Defeito: <span className="text-slate-500 font-medium normal-case block bg-slate-50 p-2 rounded border mt-0.5">{hist.defeito}</span></p>
                     </div>
                     {hist.pecas_utilizadas?.length > 0 && (
