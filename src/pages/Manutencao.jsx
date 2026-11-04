@@ -33,7 +33,7 @@ const MODELOS_DISPONIVEIS = {
   "HP Laser":["408dn","MFP 432fdn"],
   "HP (LaserJet Pro M404 / M428)": ["LaserJet Pro M404dn", "LaserJet Pro M404dw", "LaserJet Pro MFP M428fdw", "LaserJet Pro MFP M428fdn"],
   "HP (Jato de Tinta / Ink Tank)": ["Smart Tank 584", "Outro Modelo HP Ink Tank"],
-  "Pantum": ["P3302DN", "M6552NW", "M7102DN", "Outro Modelo Pantum"],
+  "Pantum": ["BM5100FDW", "P3302DN", "M6552NW", "M7102DN", "Outro Modelo Pantum"],
   "Samsung": ["ProXpress M3820ND", "ProXpress M4020ND", "ProXpress M4070FR", "Outro Modelo Samsung"],
   "Zebra (Térmica)": ["ZD230", "Outro Modelo Zebra"]
 };
