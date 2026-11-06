@@ -8,6 +8,9 @@ export default function NotasServico() {
   const [selecionadas, setSelecionadas] = useState([]);
   const [cortesias, setCortesias] = useState([]);
   
+  // Estado para armazenar valores customizados por ID de OS
+  const [valoresOS, setValoresOS] = useState({});
+  
   // Estados de Paginação da Aba Pendentes
   const [paginaPendentes, setPaginaPendentes] = useState(1);
   const ITENS_POR_PAGINA = 10;
@@ -39,14 +42,12 @@ export default function NotasServico() {
   // 1. Carrega OSs finalizadas e remove as que já possuem nota gerada
   const carregarAtendimentosFinalizados = async () => {
     try {
-      // Busca atendimentos e histórico de notas em paralelo para cruzar os dados
       const [dataAtendimentos, dataNotasGeradas, dataNotasFaturadas] = await Promise.all([
         api.getAtendimentos(),
         api.getHistorico_notas ? api.getHistorico_notas('gerado', 1, 1000).catch(() => ({ docs: [] })) : api.getHistoricoNotas('gerado', 1, 1000).catch(() => ({ docs: [] })),
         api.getHistoricoNotas ? api.getHistoricoNotas('faturado', 1, 1000).catch(() => ({ docs: [] })) : { docs: [] }
       ]);
       
-      // Coleta todos os IDs de atendimentos que já foram adicionados a alguma nota (gerada ou faturada)
       const todasNotas = [
         ...(dataNotasGeradas.docs || dataNotasGeradas.itens || (Array.isArray(dataNotasGeradas) ? dataNotasGeradas : [])),
         ...(dataNotasFaturadas.docs || dataNotasFaturadas.itens || (Array.isArray(dataNotasFaturadas) ? dataNotasFaturadas : []))
@@ -65,7 +66,6 @@ export default function NotasServico() {
         }
       });
 
-      // Filtra apenas as finalizadas que AINDA NÃO possuem nota gerada
       const prontas = dataAtendimentos.filter(item => {
         const id = String(getItemId(item));
         const statusOk = (item.status || '').toLowerCase() === 'finalizado';
@@ -73,7 +73,6 @@ export default function NotasServico() {
         return statusOk && semNota;
       });
 
-      // Ordena por data crescente (mais antiga primeiro)
       prontas.sort((a, b) => {
         const getMillis = (d) => {
           if (!d) return 0;
@@ -87,7 +86,14 @@ export default function NotasServico() {
 
       setFinalizadas(prontas);
 
-      // Sincroniza as cortesias já marcadas no banco de dados para o estado local
+      // Inicializa os valores padrão das OSs carregadas (caso venha do banco ou 70 por padrão)
+      const valoresIniciais = {};
+      prontas.forEach(item => {
+        const id = getItemId(item);
+        valoresIniciais[id] = item.valor !== undefined && item.valor !== null ? item.valor : 70;
+      });
+      setValoresOS(valoresIniciais);
+
       const cortesiasSalvas = prontas
         .filter(item => item.eh_cortesia || item.cortesia)
         .map(item => getItemId(item));
@@ -123,7 +129,6 @@ export default function NotasServico() {
     }
   }, [abaAtiva, statusFiltroHistorico, carregarHistorico]);
 
-  // Cálculos de paginação da aba pendentes (10 por tela)
   const totalPaginasPendentes = Math.ceil(finalizadas.length / ITENS_POR_PAGINA) || 1;
   const indiceInicio = (paginaPendentes - 1) * ITENS_POR_PAGINA;
   const finalizadasPaginadas = finalizadas.slice(indiceInicio, indiceInicio + ITENS_POR_PAGINA);
@@ -142,13 +147,11 @@ export default function NotasServico() {
     }
   };
 
-  // Alterna e persiste o estado de cortesia no backend e no estado local
   const toggleCortesia = async (id, e) => {
     e.stopPropagation();
     const ehCortesiaAtual = cortesias.includes(id);
     const novoStatusCortesia = !ehCortesiaAtual;
 
-    // Atualiza otimisticamente a interface
     setCortesias(prev =>
       ehCortesiaAtual ? prev.filter(i => i !== id) : [...prev, id]
     );
@@ -162,14 +165,21 @@ export default function NotasServico() {
     } catch (error) {
       console.error("Erro ao salvar cortesia:", error);
       toast.error("Erro ao salvar cortesia no servidor.");
-      // Reverte em caso de falha
       setCortesias(prev =>
         ehCortesiaAtual ? [...prev, id] : prev.filter(i => i !== id)
       );
     }
   };
 
-  const calcularValorOS = (id) => (cortesias.includes(id) ? 0 : 70);
+  const handleMudancaValor = (id, novoValor) => {
+    const valorNumerico = parseFloat(novoValor) || 0;
+    setValoresOS(prev => ({
+      ...prev,
+      [id]: valorNumerico
+    }));
+  };
+
+  const calcularValorOS = (id) => (cortesias.includes(id) ? 0 : (valoresOS[id] ?? 70));
 
   const calcularTotalSelecionadas = () => {
     return selecionadas.reduce((acc, id) => acc + calcularValorOS(id), 0);
@@ -275,7 +285,7 @@ export default function NotasServico() {
                 ${itens.map(item => `
                   <tr>
                     <td>
-                      <div class="eq-name">${item.marca}${item.modelo}</div>
+                      <div class="eq-name">${item.marca} ${item.modelo}</div>
                       <div class="eq-serial">S/N: ${item.serial || 'Não informado'}</div>
                     </td>
                     <td><div style="font-weight: 600; color: #475569;">${item.cliente}</div></td>
@@ -455,7 +465,7 @@ export default function NotasServico() {
                     </th>
                     <th className="p-4 md:p-5">Equipamento / Origem / Conclusão</th>
                     <th className="p-4 md:p-5">Peças / Relatório Técnico</th>
-                    <th className="p-4 md:p-5 text-right">Valor</th>
+                    <th className="p-4 md:p-5 text-right">Valor do Serviço</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -495,7 +505,7 @@ export default function NotasServico() {
                             </p>
                           )}
                         </td>
-                        <td className="p-4 md:p-5 text-right whitespace-nowrap">
+                        <td className="p-4 md:p-5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-3">
                             <button
                               type="button"
@@ -509,9 +519,19 @@ export default function NotasServico() {
                               {ehCortesia ? 'Cortesia' : '+ Cortesia'}
                             </button>
 
-                            <span className={`font-black ${ehCortesia ? 'line-through text-slate-300' : 'text-slate-700'}`}>
-                              R$ {calcularValorOS(itemId).toFixed(2)}
-                            </span>
+                            <div className="flex items-center gap-1 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                              <span className="text-xs font-bold text-slate-400">R$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                disabled={ehCortesia}
+                                value={valoresOS[itemId] !== undefined ? valoresOS[itemId] : 70}
+                                onChange={(e) => handleMudancaValor(itemId, e.target.value)}
+                                className={`w-20 text-right font-black bg-transparent outline-none ${
+                                  ehCortesia ? 'line-through text-slate-300' : 'text-slate-700'
+                                }`}
+                              />
+                            </div>
                           </div>
                         </td>
                       </tr>
